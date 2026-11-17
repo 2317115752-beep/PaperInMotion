@@ -1,0 +1,7 @@
+{
+  "name": "paper-in-motion", "version": "0.1.0", "private": true, "type": "module",
+  "scripts": {"dev": "vite --config web/vite.config.ts --host 127.0.0.1", "build": "tsc --noEmit && vite build --config web/vite.config.ts", "render": "node renderer/render.mjs", "start": "python3 scripts/start.py"},
+  "dependencies": {"@remotion/bundler": "4.0.544", "@remotion/renderer": "4.0.544", "lucide-react": "^0.468.0", "react": "^19.2.0", "react-dom": "^19.2.0", "remotion": "4.0.544"},
+  "devDependencies": {"@types/react": "^19.2.0", "@types/react-dom": "^19.2.0", "@vitejs/plugin-react": "6.3.0", "typescript": "^5.9.3", "vite": "8.3.8"},
+  "engines": {"node": ">=22.12.0"}
+}
