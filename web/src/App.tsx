@@ -4,10 +4,10 @@ import {
   CircleCheck, Clapperboard, Clock3, FileText, Film, Globe2, History, Layers3,
   LoaderCircle, Play, Plus, Settings2, Trash2, Upload, X,
 } from 'lucide-react';
-import { messages, readUiLanguage, translateBackendMessage, type Language, type Messages } from './i18n';
+import { formatDuration, messages, readUiLanguage, translateBackendMessage, type Language, type Messages } from './i18n';
 
 type Stage = 'reading' | 'understanding' | 'examples' | 'storyboard' | 'speech' | 'rendering' | 'complete';
-type Status = 'queued' | 'running' | 'complete' | 'failed';
+type Status = 'queued' | 'running' | 'ready' | 'complete' | 'failed';
 type Style = 'editorial' | 'midnight' | 'classroom';
 type Level = 'introductory' | 'advanced';
 type Topic = 'lora' | 'cliff';
@@ -61,6 +61,10 @@ interface Job {
   demo_topic?: Topic;
   condition?: 'A' | 'B' | 'C';
   style?: Style;
+  level?: Level;
+  supplement_count?: number;
+  pending_recommendation?: boolean;
+  recommendation?: { duration: number; teaching_points: number };
   parent_id?: string;
   scenes: Scene[];
   files: {
@@ -88,6 +92,7 @@ const stages = [
 
 const styles: Style[] = ['editorial', 'midnight', 'classroom'];
 const levels: Level[] = ['introductory', 'advanced'];
+const durations = [60, 120, 180, 300];
 const sourceFields = new Set(['id', 'title', 'narration', 'visual_type', 'bullets', 'source_pages', 'formula', 'evidence']);
 
 function setLocalPreference(key: string, value?: string) {
@@ -161,13 +166,14 @@ function ServiceMessage({ value, lang, fallback }: { value: string; lang: Langua
   </>;
 }
 
-function OptionGroup<T extends string | number>({ label, options, value, choose, disabled, className = '' }: {
+function OptionGroup<T extends string | number>({ label, options, value, choose, disabled, className = '', children }: {
   label: string;
   options: { value: T; label: string }[];
-  value: T;
+  value: T | null;
   choose: (value: T) => void;
   disabled: boolean;
   className?: string;
+  children?: ReactNode;
 }) {
   return (
     <fieldset className={`control-group ${className}`} disabled={disabled}>
@@ -184,6 +190,7 @@ function OptionGroup<T extends string | number>({ label, options, value, choose,
           </button>
         ))}
       </div>
+      {children}
     </fieldset>
   );
 }
@@ -282,13 +289,14 @@ function JobSummary({ job, lang, pollError, openRevision, retryJob, retryError, 
   busy: boolean;
 }) {
   const t = messages[lang];
-  const step = job.status === 'complete' || job.stage === 'complete'
-    ? stages.length
-    : Math.max(0, stages.findIndex(([id]) => id === job.stage));
+  const visibleStages = job.pending_recommendation ? stages.slice(0, 2) : stages;
+  const step = job.status === 'complete' || job.status === 'ready' || job.stage === 'complete'
+    ? visibleStages.length
+    : Math.max(0, visibleStages.findIndex(([id]) => id === job.stage));
   const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
   const progressMessage = activeJob(job) && job.message
     ? translateBackendMessage(job.message, lang) || t.generationProgress
-    : t.generationProgress;
+    : job.pending_recommendation ? t.paperAnalysis : t.generationProgress;
   const links = [
     ['subtitles', t.subtitleFile, FileText],
     ['storyboard', t.storyboardFile, Layers3],
@@ -300,20 +308,20 @@ function JobSummary({ job, lang, pollError, openRevision, retryJob, retryError, 
     <section className="panel job-panel">
       <div className="job-heading">
         <div>
-          <p className="field-label">{t.currentJob}</p>
+          <p className="field-label">{job.pending_recommendation ? t.paperAnalysis : t.currentJob}</p>
           <h2>{displayJobTitle(job, t)}</h2>
         </div>
         <span className={`status ${job.status}`}>{t[job.status]}</span>
       </div>
       <div className="job-meta">
         <span><Globe2 size={14} />{job.language === 'zh' ? t.chinese : t.english}</span>
-        <span><Clock3 size={14} />{t.target} {job.duration} {t.seconds}</span>
-        {typeof job.actual_duration === 'number' && <span>{t.actual} {job.actual_duration.toFixed(0)} {t.seconds}</span>}
+        {!job.pending_recommendation && <span><Clock3 size={14} />{t.target} {formatDuration(job.duration, lang)}</span>}
+        {typeof job.actual_duration === 'number' && <span>{t.actual} {formatDuration(job.actual_duration, lang)}</span>}
       </div>
       <div className="progress-label"><span>{progressMessage}</span><strong>{progress}%</strong></div>
-      <progress className={job.status === 'failed' ? 'failed' : ''} aria-label={t.generationProgress} value={progress} max={100} />
+      <progress className={job.status === 'failed' ? 'failed' : ''} aria-label={progressMessage} value={progress} max={100} />
       <ol className="stage-grid">
-        {stages.map(([id, label], index) => (
+        {visibleStages.map(([id, label], index) => (
           <li key={id} className={index < step ? 'done' : index === step && activeJob(job) ? 'current' : ''} aria-current={index === step && activeJob(job) ? 'step' : undefined}>
             <span className="stage-dot" aria-hidden="true" />
             {job.is_demo && id === 'speech' ? t.noSpeech : t[label]}
@@ -338,7 +346,7 @@ function JobSummary({ job, lang, pollError, openRevision, retryJob, retryError, 
       )}
       {job.status === 'failed' && (
         <button className="secondary-button revise-button" onClick={retryJob} disabled={busy}>
-          {t.retryJob}
+          {job.pending_recommendation ? t.retryAnalysis : t.retryJob}
         </button>
       )}
       {retryError !== null && <div className="notice error" role="alert"><ServiceMessage value={retryError} lang={lang} /></div>}
@@ -416,7 +424,8 @@ export default function App() {
   const [lang, setLang] = useState<Language>(readUiLanguage);
   const t = messages[lang];
   const [language, setLanguage] = useState<Language>('en');
-  const [duration, setDuration] = useState(120);
+  const [manualDuration, setManualDuration] = useState(120);
+  const [manualDurationJobId, setManualDurationJobId] = useState<string>();
   const [style, setStyle] = useState<Style>('editorial');
   const [level, setLevel] = useState<Level>('introductory');
   const [file, setFile] = useState<File | null>(null);
@@ -426,6 +435,7 @@ export default function App() {
   const [configLoading, setConfigLoading] = useState(true);
   const [job, setJob] = useState<Job | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [submittingRecommendation, setSubmittingRecommendation] = useState(false);
   const [uploadError, setUploadError] = useState<UploadError | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [pollError, setPollError] = useState(false);
@@ -443,14 +453,24 @@ export default function App() {
   const [deleteError, setDeleteError] = useState<'deleteJobError' | 'deleteJobActive' | null>(null);
   const [mediaError, setMediaError] = useState(false);
   const deletedJobIds = useRef(new Set<string>());
+  const sourceChanged = useRef(false);
   const cancelDeleteButton = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const supplementInput = useRef<HTMLInputElement>(null);
   const jobId = job?.id;
   const jobRunning = activeJob(job);
   const busy = submitting || jobRunning;
+  const analyzing = submittingRecommendation || (jobRunning && !!job?.pending_recommendation);
+  const recommendation = job?.status === 'ready' && job.pending_recommendation ? job.recommendation : undefined;
+  const recommendedDuration = recommendation?.duration;
+  const readyJob = job?.status === 'ready' && typeof recommendedDuration === 'number' &&
+    Number.isInteger(recommendedDuration) && recommendedDuration > 0 ? job : null;
+  const usingRecommendedDuration = !!readyJob && manualDurationJobId !== readyJob.id;
+  const savedPaper = !file && job?.pending_recommendation ? job : null;
+  const supplementCount = savedPaper?.supplement_count ?? supplements.length;
   const videoUrl = job?.status === 'complete' ? job.files.video : undefined;
   const maxUpload = config?.max_upload_mb || 25;
+  const formReady = !busy && !uploadError && !!config?.api_configured && !configError && !configLoading;
 
   useEffect(() => {
     document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
@@ -484,6 +504,7 @@ export default function App() {
           return;
         }
         const result = await readResponse<Job>(response);
+        if (sourceChanged.current && result.pending_recommendation) return;
         if (!controller.signal.aborted && !deletedJobIds.current.has(id)) setJob(current => current ?? result);
       })
       .catch(() => { if (!controller.signal.aborted && !deletedJobIds.current.has(id)) setLastJobError(true); });
@@ -493,6 +514,13 @@ export default function App() {
   useEffect(() => {
     if (jobId) setLocalPreference('pim-last-job', jobId);
   }, [jobId]);
+
+  const pendingLanguage = job?.pending_recommendation ? job.language : undefined;
+  const pendingLevel = job?.pending_recommendation ? job.level : undefined;
+  useEffect(() => {
+    if (pendingLanguage) setLanguage(pendingLanguage);
+    if (pendingLevel) setLevel(pendingLevel);
+  }, [jobId, pendingLanguage, pendingLevel]);
 
   useEffect(() => {
     if (!jobId || !jobRunning) return;
@@ -555,7 +583,10 @@ export default function App() {
     const error = next.length > 3 ? 'supplementCountError'
       : chosen.map(validateFile).find(Boolean) || validateTotal(file, next);
     setUploadError(error);
-    if (!error) setSupplements(next);
+    if (!error) {
+      dismissRecommendation();
+      setSupplements(next);
+    }
   }
 
   function selectFile(candidate?: File) {
@@ -563,16 +594,62 @@ export default function App() {
     setRequestError(null);
     const error = validateFile(candidate) || validateTotal(candidate, supplements);
     setUploadError(error);
-    if (!error) setFile(candidate);
+    if (!error) {
+      dismissRecommendation();
+      setFile(candidate);
+    }
   }
 
-  function showJob(next: Job) {
+  function showJob(next: Job, restoreInputs = false) {
+    if (jobId !== next.id) setManualDurationJobId(undefined);
+    if (restoreInputs && next.pending_recommendation && jobId !== next.id) {
+      setFile(null);
+      setSupplements([]);
+      setUploadError(null);
+      setRequestError(null);
+    }
     setJob(next);
     setTab('preview');
     setPollError(false);
     setLastJobError(false);
     setRetryError(null);
     window.history.replaceState(null, '', window.location.pathname);
+  }
+
+  function dismissRecommendation() {
+    sourceChanged.current = true;
+    if (!job?.pending_recommendation) return;
+    forgetJob(job.id);
+    setJob(null);
+    setPollError(false);
+    setRequestError(null);
+    setRetryError(null);
+    setManualDurationJobId(undefined);
+  }
+
+  function paperForm(paper: File) {
+    const data = new FormData();
+    data.set('file', paper);
+    data.set('language', language);
+    data.set('level', level);
+    supplements.forEach(item => data.append('supplements', item));
+    return data;
+  }
+
+  async function requestRecommendation() {
+    if (!file || !formReady || readyJob) return;
+    setSubmitting(true);
+    setSubmittingRecommendation(true);
+    setRequestError(null);
+    try {
+      const response = await fetch('/api/recommendations', { method: 'POST', body: paperForm(file) });
+      showJob(await readResponse<Job>(response));
+    } catch (error) {
+      setRequestError(errorMessage(error));
+    } finally {
+      setSubmittingRecommendation(false);
+      setSubmitting(false);
+    }
   }
 
   async function deleteHistoryJob() {
@@ -595,6 +672,7 @@ export default function App() {
         return current;
       });
       if (jobId === id) {
+        setManualDurationJobId(undefined);
         setTab('preview');
         setPollError(false);
         setLastJobError(false);
@@ -611,21 +689,23 @@ export default function App() {
   }
 
   async function submit(demo?: Topic) {
-    if (busy || (!demo && (!file || uploadError || !config?.api_configured))) return;
+    if (busy || (!demo && (!formReady || (!file && !readyJob)))) return;
     setSubmitting(true);
     setRequestError(null);
     try {
       if (demo) {
         const query = new URLSearchParams({ language, style, topic: demo });
         showJob(await readResponse<Job>(await fetch(`/api/demo?${query}`, { method: 'POST' })));
-      } else {
-        const data = new FormData();
-        data.set('file', file!);
-        data.set('language', language);
-        data.set('duration', String(duration));
+      } else if (readyJob) {
+        const duration = usingRecommendedDuration ? recommendedDuration : manualDuration;
+        const response = await fetch(`/api/jobs/${encodeURIComponent(readyJob.id)}/generate`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ duration, style }),
+        });
+        showJob(await readResponse<Job>(response));
+      } else if (file) {
+        const data = paperForm(file);
+        data.set('duration', String(manualDuration));
         data.set('style', style);
-        data.set('level', level);
-        supplements.forEach(item => data.append('supplements', item));
         showJob(await readResponse<Job>(await fetch('/api/jobs', { method: 'POST', body: data })));
       }
     } catch (error) {
@@ -655,6 +735,7 @@ export default function App() {
   async function retryJob() {
     if (busy || job?.status !== 'failed') return;
     setSubmitting(true);
+    setSubmittingRecommendation(!!job.pending_recommendation);
     setRetryError(null);
     try {
       const response = await fetch(`/api/jobs/${encodeURIComponent(job.id)}/retry`, { method: 'POST' });
@@ -662,17 +743,20 @@ export default function App() {
     } catch (error) {
       setRetryError(errorMessage(error));
     } finally {
+      setSubmittingRecommendation(false);
       setSubmitting(false);
     }
   }
 
   function reset() {
     if (busy) return;
+    sourceChanged.current = true;
     setLocalPreference('pim-last-job');
     window.history.replaceState(null, '', window.location.pathname);
     setJob(null);
     setFile(null);
     setSupplements([]);
+    setManualDurationJobId(undefined);
     setTab('preview');
     setUploadError(null);
     setRequestError(null);
@@ -739,41 +823,80 @@ export default function App() {
                   onDrop={event => { event.preventDefault(); setDragging(false); selectFile(event.dataTransfer.files[0]); }}
                   disabled={busy}
                 >
-                  <span className="upload-icon">{file ? <CircleCheck size={23} /> : <Upload size={23} />}</span>
-                  <strong>{file?.name || t.drop}</strong>
-                  <span>{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB · ${t.replace}` : t.browse}</span>
-                  {!file && <small>{t.uploadLimit} {maxUpload} MB</small>}
+                  <span className="upload-icon">{file || savedPaper ? <CircleCheck size={23} /> : <Upload size={23} />}</span>
+                  <strong>{file?.name || savedPaper?.title || t.drop}</strong>
+                  <span>{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB · ${t.replace}` : savedPaper ? t.replace : t.browse}</span>
+                  {!file && !savedPaper && <small>{t.uploadLimit} {maxUpload} MB</small>}
                 </button>
                 <details className="supplement-control">
-                  <summary>{t.supplements}{supplements.length > 0 && ` (${supplements.length})`}</summary>
-                  <p>{t.supplementLimit}</p>
-                  <ul>{supplements.map((item, index) => (
-                    <li key={`${item.name}-${index}`}>{item.name}
-                      <button type="button" className="icon-button" disabled={busy} aria-label={`${t.remove} ${item.name}`}
-                        onClick={() => { setSupplements(items => items.filter((_, i) => i !== index)); setUploadError(null); }}>
-                        <X size={15} />
-                      </button>
-                    </li>
-                  ))}</ul>
-                  <input ref={supplementInput} className="sr-only" tabIndex={-1} type="file" multiple
-                    aria-label={t.supplements} accept=".pdf,application/pdf" disabled={busy}
-                    onChange={event => { selectSupplements(Array.from(event.target.files || [])); event.target.value = ''; }} />
-                  <button type="button" className="text-button" disabled={busy || supplements.length >= 3} onClick={() => supplementInput.current?.click()}>
-                    <Plus size={15} />{t.addSupplement}
-                  </button>
+                  <summary>{t.supplements}{supplementCount > 0 && ` (${supplementCount})`}</summary>
+                  {savedPaper ? <p>{supplementCount ? t.savedSupplements : t.noSavedSupplements}</p> : <>
+                    <p>{t.supplementLimit}</p>
+                    <ul>{supplements.map((item, index) => (
+                      <li key={`${item.name}-${index}`}>{item.name}
+                        <button type="button" className="icon-button" disabled={busy} aria-label={`${t.remove} ${item.name}`}
+                          onClick={() => {
+                            dismissRecommendation();
+                            setSupplements(items => items.filter((_, i) => i !== index));
+                            setUploadError(null);
+                          }}>
+                          <X size={15} />
+                        </button>
+                      </li>
+                    ))}</ul>
+                    <input ref={supplementInput} className="sr-only" tabIndex={-1} type="file" multiple
+                      aria-label={t.supplements} accept=".pdf,application/pdf" disabled={busy}
+                      onChange={event => { selectSupplements(Array.from(event.target.files || [])); event.target.value = ''; }} />
+                    <button type="button" className="text-button" disabled={busy || supplements.length >= 3} onClick={() => supplementInput.current?.click()}>
+                      <Plus size={15} />{t.addSupplement}
+                    </button>
+                  </>}
                 </details>
                 <OptionGroup label={t.videoLanguage} options={[
                   { value: 'en', label: t.english }, { value: 'zh', label: t.chinese },
-                ]} value={language} choose={setLanguage} disabled={busy} />
-                <OptionGroup label={t.duration} options={[1, 2, 3, 5].map(minutes => ({
-                  value: minutes * 60, label: `${minutes} ${t.minute}`,
-                }))} value={duration} choose={setDuration} disabled={busy} />
+                ]} value={language} choose={next => {
+                  if (next !== language) dismissRecommendation();
+                  setLanguage(next);
+                }} disabled={busy || !!savedPaper} />
+                <OptionGroup label={t.duration} options={durations.map(seconds => ({
+                  value: seconds, label: formatDuration(seconds, lang),
+                }))} value={usingRecommendedDuration ? null : manualDuration} choose={seconds => {
+                  setManualDuration(seconds);
+                  setManualDurationJobId(readyJob?.id);
+                }} disabled={busy}>
+                  <div className="duration-recommendation" aria-live="polite">
+                    {readyJob && recommendation && recommendedDuration
+                      ? <button
+                          type="button" className="duration-recommendation-choice"
+                          aria-pressed={usingRecommendedDuration}
+                          onClick={() => setManualDurationJobId(undefined)}
+                        >
+                          <Clock3 size={16} aria-hidden="true" />
+                          <span>
+                            <strong>{t.recommendedDuration(formatDuration(recommendedDuration, lang))}</strong>
+                            <small>{t.recommendationReason(recommendation.teaching_points)}</small>
+                          </span>
+                          {usingRecommendedDuration && <CircleCheck size={17} aria-hidden="true" />}
+                        </button>
+                      : <button
+                          type="button" className="text-button" disabled={!file || !formReady}
+                          onClick={() => void requestRecommendation()}
+                        >
+                          {analyzing ? <LoaderCircle size={15} className="spin" /> : <Clock3 size={15} />}
+                          {analyzing ? t.analyzingPaper : t.recommendDuration}
+                        </button>}
+                  </div>
+                </OptionGroup>
                 <OptionGroup className="style-group" label={t.style} options={styles.map(value => ({
                   value, label: t[value],
                 }))} value={style} choose={setStyle} disabled={busy} />
                 <OptionGroup label={t.level} options={levels.map(value => ({
                   value, label: t[value],
-                }))} value={level} choose={setLevel} disabled={busy} />
+                }))} value={level} choose={next => {
+                  if (next !== level) dismissRecommendation();
+                  setLevel(next);
+                }} disabled={busy || !!savedPaper} />
+                {savedPaper && <p className="saved-paper-settings">{t.savedPaperSettings}</p>}
                 {configError && <div className="notice"><CircleAlert size={16} /><div>{t.apiUnavailable} <button type="button" onClick={() => void loadConfig()}>{t.retry}</button></div></div>}
                 {!configLoading && !configError && !config?.api_configured && (
                   <div className="notice"><CircleAlert size={16} /><div><ServiceMessage value={config?.configuration_error || ''} lang={lang} fallback={t.apiMissing} /></div></div>
@@ -782,9 +905,9 @@ export default function App() {
                   <CircleAlert size={16} />{t[uploadError]}{uploadError === 'sizeError' && ` ${maxUpload} MB.`}
                 </div>}
                 {requestError !== null && <div className="notice error" role="alert"><CircleAlert size={16} /><div><ServiceMessage value={requestError} lang={lang} /></div></div>}
-                <button className="primary-button" type="submit" disabled={busy || !file || !!uploadError || !config?.api_configured || configError || configLoading}>
+                <button className="primary-button" type="submit" disabled={!formReady || (!file && !readyJob)}>
                   {busy ? <LoaderCircle size={18} className="spin" /> : <Film size={18} />}
-                  {submitting ? t.submitting : jobRunning ? t.generating : t.generate}
+                  {analyzing ? t.analyzingPaper : submitting ? t.submitting : jobRunning ? t.generating : t.generate}
                   {!busy && <ArrowRight size={17} />}
                 </button>
               </div>
@@ -815,13 +938,15 @@ export default function App() {
                       ? <video key={videoUrl} src={videoUrl} poster={job?.files.poster} controls playsInline preload="metadata"
                           aria-label={t.videoLabel} onError={() => setMediaError(true)} />
                       : job?.status === 'failed'
-                        ? <EmptyPreview title={t.jobFailed} detail={<ServiceMessage value={job.error || job.message || ''} lang={lang} />} icon={<CircleAlert size={30} />} />
+                        ? <EmptyPreview title={job.pending_recommendation ? t.analysisFailed : t.jobFailed} detail={<ServiceMessage value={job.error || job.message || ''} lang={lang} />} icon={<CircleAlert size={30} />} />
                         : mediaError
                           ? <EmptyPreview title={t.mediaError} detail={t.mediaErrorText} icon={<CircleAlert size={30} />} />
                           : job?.status === 'complete'
                             ? <EmptyPreview title={t.jobNoVideo} detail={<button className="text-button" onClick={() => setTab('storyboard')}>{t.openStoryboard}</button>} />
+                            : readyJob
+                              ? <EmptyPreview title={t.ready} detail={t.analysisReadyDetail} icon={<CircleCheck size={30} />} />
                             : busy
-                              ? <EmptyPreview title={t.generating} detail={job ? `${job.progress}%` : t.submitting} icon={<LoaderCircle size={30} className="spin" />} />
+                              ? <EmptyPreview title={analyzing ? t.analyzingPaper : t.generating} detail={job && activeJob(job) ? `${job.progress}%` : t.submitting} icon={<LoaderCircle size={30} className="spin" />} />
                               : <EmptyPreview title={t.emptyTitle} detail={t.emptyText} />}
                   </div>
                 : <div className="storyboard-panel">
@@ -883,7 +1008,7 @@ export default function App() {
                     <button
                       className="history-open-job"
                       disabled={busy && jobId !== previous.id}
-                      onClick={() => { showJob(previous); closeModal(); }}
+                      onClick={() => { showJob(previous, true); closeModal(); }}
                     >
                       <span>
                         <strong>{title}</strong>

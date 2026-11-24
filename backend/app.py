@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT/'.env')
 from .providers import get_config, ProviderError, redact
-from .pipeline import DURATION_SCENES, run_job, save_json
+from .pipeline import DURATION_SCENES, run_job, run_recommendation, save_json
 
 DATA = ROOT/'data'
 DATA.mkdir(exist_ok=True)
@@ -40,6 +40,10 @@ class Revision(BaseModel):
     style: Style | None = None
     narrations: dict[str, str] = Field(default_factory=dict, max_length=max(DURATION_SCENES.values()))
 
+
+class RecommendedGeneration(BaseModel):
+    duration: int | None = None
+    style: Style = 'editorial'
 
 
 @asynccontextmanager
@@ -122,24 +126,39 @@ def worker(job, folder):
             save_json(folder/'job.json', job)
     try:
         update(status='running')
-        run_job(job, folder, update)
+        if job.get('pending_recommendation'):
+            recommendation = run_recommendation(job, folder, update)
+            update(status='ready', stage='understanding', progress=100,
+                   recommendation=recommendation, duration=recommendation['duration'],
+                   message='Paper analysis ready')
+        else:
+            run_job(job, folder, update)
     except Exception as exc:
         logging.error('Job %s failed (%s); see data/%s/error.log', job['id'], type(exc).__name__, job['id'])
         detail = redact(traceback.format_exc())
         (folder/'error.log').write_text(detail, encoding='utf-8')
-        message = redact(exc)[:900] if isinstance(exc, (ValueError, ProviderError)) else f'Generation failed ({type(exc).__name__}). See the local job log.'
+        task = 'Paper analysis' if job.get('pending_recommendation') else 'Generation'
+        message = (redact(exc)[:900] if isinstance(exc, (ValueError, ProviderError))
+                   else f'{task} failed ({type(exc).__name__}). See the local job log.')
         update(status='failed', message='任务未完成', error=message)
 
 
 
 def enqueue(job, folder):
-    save_json(folder/'job.json', job)
-    JOBS[job['id']] = job
-    result = json.loads(json.dumps(job))
     if POOL is None:
         raise HTTPException(503, 'The rendering worker is unavailable.')
-    POOL.submit(worker, job, folder)
-    return result
+    previous = JOBS.get(job['id'])
+    save_json(folder/'job.json', job)
+    try:
+        POOL.submit(worker, job, folder)
+    except RuntimeError:
+        if previous is None:
+            (folder/'job.json').unlink(missing_ok=True)
+        else:
+            save_json(folder/'job.json', previous)
+        raise HTTPException(503, 'The rendering worker is unavailable.') from None
+    JOBS[job['id']] = job
+    return json.loads(json.dumps(job))
 
 
 async def pdf_bytes(file):
@@ -156,14 +175,7 @@ async def pdf_bytes(file):
         await file.close()
 
 
-@app.post('/api/jobs', status_code=202)
-async def generate(
-    file: UploadFile = File(...), language: Literal['zh', 'en'] = Form('zh'),
-    duration: int = Form(120), style: Style = Form('editorial'), level: Level = Form('introductory'),
-    condition: Condition = Form('C'), supplements: list[UploadFile] | None = File(None),
-):
-    if duration not in DURATION_SCENES:
-        raise HTTPException(422, 'Choose a target length of 60, 120, 180 or 300 seconds.')
+async def submit_paper(file, supplements, language, duration, **options):
     settings = config()
     if not settings['api_configured']:
         raise HTTPException(400, settings['configuration_error'])
@@ -179,10 +191,56 @@ async def generate(
     with LOCK:
         busy_check()
         job, folder = new_job(language, duration, False, Path(file.filename).name[:150],
-                              style=style, level=level, condition=condition, supplement_count=len(additions))
+                              supplement_count=len(additions), **options)
         (folder/'paper.pdf').write_bytes(data)
         for index, extra in enumerate(additions, 1):
             (folder/f'supplement-{index}.pdf').write_bytes(extra)
+        return enqueue(job, folder)
+
+
+@app.post('/api/jobs', status_code=202)
+async def generate(
+    file: UploadFile = File(...), language: Literal['zh', 'en'] = Form('zh'),
+    duration: int = Form(120), style: Style = Form('editorial'), level: Level = Form('introductory'),
+    condition: Condition = Form('C'), supplements: list[UploadFile] | None = File(None),
+):
+    if duration not in DURATION_SCENES:
+        raise HTTPException(422, 'Choose a target length of 60, 120, 180 or 300 seconds.')
+    return await submit_paper(file, supplements, language, duration, style=style, level=level, condition=condition)
+
+
+@app.post('/api/recommendations', status_code=202)
+async def recommend(
+    file: UploadFile = File(...), language: Literal['zh', 'en'] = Form('zh'),
+    level: Level = Form('introductory'), condition: Literal['B', 'C'] = Form('C'),
+    supplements: list[UploadFile] | None = File(None),
+):
+    return await submit_paper(file, supplements, language, 120, level=level, condition=condition,
+                              pending_recommendation=True)
+
+
+@app.post('/api/jobs/{job_id}/generate', status_code=202)
+def generate_recommendation(job_id: str, generation: RecommendedGeneration):
+    with LOCK:
+        original = JOBS.get(job_id)
+        if original is None:
+            raise HTTPException(404, 'Job not found.')
+        if original['status'] != 'ready' or not original.get('pending_recommendation'):
+            raise HTTPException(409, 'Wait for the paper analysis before generating a video.')
+        busy_check()
+        recommended = original['recommendation']['duration']
+        duration = generation.duration if generation.duration is not None else recommended
+        if duration != recommended and duration not in DURATION_SCENES:
+            raise HTTPException(422, 'Choose a target length of 60, 120, 180 or 300 seconds.')
+        folder = DATA/job_id
+        if not all((folder/name).is_file() for name in ('paper.pdf', 'method.json', 'sources.json')):
+            raise HTTPException(409, 'The saved paper analysis is unavailable.')
+        settings = config()
+        if not settings['api_configured']:
+            raise HTTPException(400, settings['configuration_error'])
+        job = dict(original, status='queued', stage='storyboard', progress=0, message='任务已创建',
+                   duration=duration, style=generation.style, pending_recommendation=False,
+                   from_recommendation=True, recommended_pacing=duration == recommended)
         return enqueue(job, folder)
 
 
@@ -230,6 +288,8 @@ def revise(job_id: str, revision: Revision):
                               style=revision.style or original.get('style', 'editorial'),
                               level=original.get('level', 'introductory'), condition=condition,
                               parent_id=job_id, revision=revision.model_dump(exclude_none=True))
+        if original.get('recommended_pacing') and not revision.narrations:
+            job['recommended_pacing'] = True
         for path in [source/'paper.pdf', source/'method.json', source/'storyboard-plan.json',
                      source/'example.json', source/'sources.json', source/'evidence-excerpts.json',
                      source/'evidence-check.json', *source.glob('supplement-*.pdf')]:
@@ -251,14 +311,23 @@ def retry_job(job_id: str):
         source = DATA/job_id
         if not original['is_demo'] and not (source/'paper.pdf').is_file():
             raise HTTPException(409, 'The original PDF is unavailable.')
-        if not original['is_demo'] and not config()['api_configured']:
-            raise HTTPException(400, config()['configuration_error'])
+        if not original['is_demo']:
+            settings = config()
+            if not settings['api_configured']:
+                raise HTTPException(400, settings['configuration_error'])
+        if original.get('pending_recommendation'):
+            job = dict(original, status='queued', stage='reading', progress=0, message='任务已创建')
+            job.pop('error', None)
+            return enqueue(job, source)
         job, folder = new_job(original['language'], original['duration'], original['is_demo'],
                               original['title'], style=original.get('style', 'editorial'),
                               level=original.get('level', 'introductory'),
                               condition=original.get('condition', 'C'), parent_id=job_id,
                               demo_topic=original.get('demo_topic', 'lora'),
                               supplement_count=original.get('supplement_count', 0))
+        for name in ('from_recommendation', 'recommendation', 'recommended_pacing', 'analysis_warnings'):
+            if name in original:
+                job[name] = original[name]
         # Checkpoints from the first release use a different storyboard format.
         options = original.get('revision') or {}
         if (source/'storyboard-plan.json').is_file() and 'style' in original:
@@ -308,7 +377,7 @@ def delete_job(job_id: str):
         job = JOBS.get(job_id)
         if not JOB_ID.fullmatch(job_id) or job is None:
             raise HTTPException(404, 'Job not found.')
-        if job['status'] not in ('complete', 'failed'):
+        if job['status'] not in ('complete', 'failed', 'ready'):
             raise HTTPException(409, 'Wait for the job to finish before deleting it.')
 
         folder = DATA/job_id

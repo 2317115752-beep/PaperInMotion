@@ -211,6 +211,9 @@ def evaluate_job(folder, manifest):
     findings = []
     for item in timing['issues']:
         findings.append({'stage': 'production', 'code': item['type'], 'scene': item['scene']})
+    visual_pacing = manifest.get('visual_pacing')
+    if isinstance(visual_pacing, dict):
+        timing['visual_pacing'] = visual_pacing
     if not media['file_bytes']:
         findings.append({'stage': 'production', 'code': 'missing_video'})
     if media.get('probe_available'):
@@ -226,7 +229,7 @@ def evaluate_job(folder, manifest):
         measured = media.get('duration_seconds', timing['manifest_duration_seconds'])
         timing['target_duration_seconds'] = target
         timing['target_delta_seconds'] = round(measured - target, 3)
-        if abs(measured - target) > target * .05:
+        if abs(measured - target) > target * .05 and not visual_pacing:
             findings.append({'stage': 'production', 'code': 'target_duration_mismatch'})
     if any(not check['passed'] for check in checks):
         findings.append({'stage': 'example', 'code': 'calculation_checkpoint'})

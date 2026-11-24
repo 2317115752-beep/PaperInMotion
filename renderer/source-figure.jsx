@@ -33,7 +33,7 @@ function sourceLabel(scene) {
   return source;
 }
 
-export function SourceFigure({scene, zh, frame, CaptionText}) {
+export function SourceFigure({scene, zh, frame, CaptionText, focus, paced}) {
   const {fps} = useVideoConfig();
   const duration = scene.duration_frames ?? Infinity;
   const planned = timedNotes((scene.visual_beats ?? []).filter(beat => Number.isInteger(beat?.cue)).map(beat => ({
@@ -44,8 +44,13 @@ export function SourceFigure({scene, zh, frame, CaptionText}) {
     text: beat?.label,
     start: beat?.start_frame,
   })), duration);
-  const hasNotes = notes.length >= 2;
-  const active = hasNotes ? notes.findLast(note => note.start <= frame) : undefined;
+  const hasNotes = paced ? Boolean(focus) : notes.length >= 2;
+  const active = paced ? focus && {start: focus.start_frame, text: focus.label}
+    : hasNotes ? notes.findLast(note => note.start <= frame) : undefined;
+  const aside = focus ? interpolate(frame - focus.first_frame, [0, Math.max(1, Math.round(fps * .52))], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  }) : 0;
   const enter = active ? interpolate(frame - active.start, [0, Math.max(1, Math.round(fps * .3))], [0, 1], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
@@ -53,14 +58,19 @@ export function SourceFigure({scene, zh, frame, CaptionText}) {
   const source = sourceLabel(scene);
 
   return (
-    <div className="pim-source-figure">
+    <div className="pim-source-figure" style={paced ? {gap: 48 * aside} : undefined}>
       <figure className="pim-source-figure-plate">
         <Img className="pim-source-figure-image" src={staticFile(scene.figure_file)}
           alt={scene.figure_caption || (zh ? '论文原图' : 'Original paper figure')} />
         {source && <figcaption className="pim-source-figure-credit">{source}</figcaption>}
       </figure>
-      {hasNotes && <aside className="pim-source-figure-note">
+      {hasNotes && <aside className="pim-source-figure-note" style={paced ? {
+        flexBasis: 300 * aside,
+        opacity: aside,
+        overflow: 'hidden',
+      } : undefined}>
         {active && <div className="pim-source-figure-note-text" style={{
+          minWidth: paced ? 300 : undefined,
           opacity: .58 + .42 * enter,
           transform: `translateY(${(1 - enter) * 10}px)`,
         }}>

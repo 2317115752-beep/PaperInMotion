@@ -1234,3 +1234,92 @@
 .pim-math .katex {
   font-size: 1em;
 }
+
+.pim-paced-note {
+  min-width: 0;
+  max-width: 100%;
+  justify-self: start;
+  border-left: 4px solid var(--warm);
+  padding: 5px 0 5px 23px;
+  color: var(--ink);
+  font-size: 32px;
+  font-weight: 640;
+  line-height: 1.22;
+  overflow-wrap: anywhere;
+}
+
+.pim-title-grid .pim-title-art {
+  transform: translateX(calc(36px * var(--pacing-title-shift, 0)))
+    scale(calc(1 - .12 * var(--pacing-title-shift, 0)));
+}
+
+.pim-paced-title-lead {
+  font-size: 49px;
+  max-width: 930px;
+}
+
+.pim-paced-equation {
+  position: relative;
+  height: 530px;
+  min-width: 0;
+  display: grid;
+  place-items: center;
+}
+
+.pim-paced-equation-main {
+  display: grid;
+  align-content: center;
+  gap: 24px;
+  width: 100%;
+  text-align: center;
+}
+
+.pim-paced-equation-main .pim-derivation-expression {
+  grid-row: auto;
+  height: 216px;
+  font-size: 105px;
+}
+
+.pim-paced-equation > .pim-paced-note {
+  position: absolute;
+  bottom: 25px;
+  justify-self: center;
+  max-width: 1250px;
+  font-size: 48px;
+}
+
+.pim-comparison.is-paced .pim-comparison-card {
+  min-height: 225px;
+}
+
+.pim-derivation-context .pim-paced-note,
+.pim-comparison .pim-paced-note {
+  justify-self: center;
+}
+
+.pim-paced-takeaway {
+  display: grid;
+  gap: 30px;
+  justify-items: start;
+  align-content: center;
+  min-height: 320px;
+  min-width: 0;
+}
+
+.pim-paced-takeaway .pim-paced-note {
+  max-width: 1300px;
+  padding-left: 34px;
+  font-size: 78px;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+.pim-paced-support {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.pim-paced-graphic {
+  min-width: 0;
+}

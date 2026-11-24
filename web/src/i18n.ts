@@ -1,5 +1,14 @@
 export type Language = 'en' | 'zh';
 
+export function formatDuration(seconds: number, language: Language) {
+  const total = Math.round(seconds);
+  const minutes = Math.floor(total / 60);
+  const remaining = total % 60;
+  if (!minutes) return language === 'zh' ? `${remaining} 秒` : `${remaining} s`;
+  if (!remaining) return language === 'zh' ? `${minutes} 分钟` : `${minutes} min`;
+  return language === 'zh' ? `${minutes} 分 ${remaining} 秒` : `${minutes} min ${remaining} s`;
+}
+
 const en = {
   interfaceLanguage: 'Interface language',
   workspace: 'Video Studio',
@@ -26,8 +35,17 @@ const en = {
   english: 'English',
   chinese: 'Chinese',
   duration: 'Target duration',
-  minute: 'min',
-  seconds: 's',
+  recommendDuration: 'Recommend duration',
+  recommendedDuration: (duration: string) => `${duration} recommended`,
+  recommendationReason: (points: number) => `Identified ${points} teaching ${points === 1 ? 'point' : 'points'}.`,
+  paperAnalysis: 'Paper analysis',
+  analyzingPaper: 'Analyzing paper…',
+  analysisReadyDetail: 'Choose a duration and generate the video.',
+  analysisFailed: 'Paper analysis stopped',
+  retryAnalysis: 'Retry analysis',
+  savedSupplements: 'Supplementary PDFs from the saved analysis will be reused.',
+  noSavedSupplements: 'No supplementary PDFs were included in this analysis.',
+  savedPaperSettings: 'Upload the PDF again to change the saved language or audience.',
   style: 'Visual style',
   editorial: 'Editorial',
   midnight: 'Midnight',
@@ -52,6 +70,7 @@ const en = {
   scenesText: 'Expand a scene to review its narration, evidence, and visuals.',
   queued: 'Queued',
   running: 'In progress',
+  ready: 'Paper analysis ready',
   complete: 'Complete',
   failed: 'Failed',
   reading: 'Extract PDF',
@@ -193,8 +212,17 @@ const zh: typeof en = {
   english: '英文',
   chinese: '中文',
   duration: '目标时长',
-  minute: '分钟',
-  seconds: '秒',
+  recommendDuration: '推荐时长',
+  recommendedDuration: (duration: string) => `建议 ${duration}`,
+  recommendationReason: (points: number) => `识别到 ${points} 个讲解要点。`,
+  paperAnalysis: '论文分析',
+  analyzingPaper: '正在分析论文…',
+  analysisReadyDetail: '选择时长后即可生成视频。',
+  analysisFailed: '论文分析未完成',
+  retryAnalysis: '重试分析',
+  savedSupplements: '生成视频时会复用已保存的补充 PDF。',
+  noSavedSupplements: '此分析没有包含补充 PDF。',
+  savedPaperSettings: '重新上传 PDF 即可更改已保存的视频语言或目标受众。',
   style: '画面风格',
   editorial: '研究简报',
   midnight: '深色演示',
@@ -219,6 +247,7 @@ const zh: typeof en = {
   scenesText: '展开分镜查看旁白、画面和原文依据。',
   queued: '排队中',
   running: '处理中',
+  ready: '论文分析已完成',
   complete: '已完成',
   failed: '失败',
   reading: '读取论文',
@@ -408,6 +437,11 @@ const chineseBackendMessages: [RegExp, string][] = [
   [/^Reusing verified method and storyboard/, '正在复用已验证的方法和分镜'],
   [/^Extracting PDF text and visual evidence/, '正在提取 PDF 正文和图表依据'],
   [/^Reading the paper and locating evidence/, '正在理解论文并定位依据'],
+  [/^Finding teaching points and estimating video duration/, '正在识别讲解要点并估算视频时长'],
+  [/^Paper analysis ready/, '论文分析已完成'],
+  [/^Wait for the paper analysis before generating a video/, '请等待论文分析完成后再生成视频。'],
+  [/^The saved paper analysis is unavailable/, '已保存的论文分析不可用。'],
+  [/^Paper analysis failed \(([^)]+)\)/, '论文分析失败（$1）。请查看本地任务日志。'],
   [/^Computing and checking the worked example/, '正在演算和验证示例'],
   [/^Planning the narration and visuals/, '正在编排分镜和旁白'],
   [/^Synthesizing scene (\d+)\/(\d+)/, '正在合成配音 $1 / $2'],
@@ -424,6 +458,8 @@ const chineseBackendMessages: [RegExp, string][] = [
   [/^This method has no compatible executable example/, '当前方法没有可执行的计算示例，视频会用简化示意来讲解。'],
   [/^Paper citations locate the source passages/, '可根据引用定位原文，语义支持程度另行评估。'],
   [/^Target duration (\d+)s. Measured narration yields (\d+)s/, '目标时长 $1 秒，按配音时长生成约 $2 秒。'],
+  [/^Recommended duration (\d+)s\. The natural cut runs (\d+)s/, '建议时长 $1 秒，按讲解节奏生成约 $2 秒。'],
+  [/^Some scenes have longer gaps between planned visual changes/, '部分镜头的画面变化间隔超过节奏目标。'],
   [/^Additional narration was unavailable. The original voiceover was kept/, '补充讲解未能生成，已保留原配音。'],
   [/^Upload a PDF\.$/, '请上传 PDF。'],
   [/^Each PDF must be (\d+) MB or smaller/, '每份 PDF 不得超过 $1 MB。'],
