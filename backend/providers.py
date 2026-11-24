@@ -1,4 +1,6 @@
 """Alibaba Cloud Bailian APIs only; no model weights are downloaded."""
+import base64
+import binascii
 import io
 import json
 import logging
@@ -73,16 +75,17 @@ def redact(value):
     return re.sub(r'(?i)Bearer\s+[^\s"\']+', 'Bearer [redacted]', text)
 
 
-def service_error_details(response):
+def service_error_details(response, body=None):
     """Keep bounded service errors, never request headers, prompts or signed URLs."""
     if response is None:
         return {}
     def clean(value, limit=500):
         return re.sub(r'\s+', ' ', redact(value)).strip()[:limit]
-    try:
-        body = response.json()
-    except (ValueError, RuntimeError):
-        body = None
+    if body is None:
+        try:
+            body = response.json()
+        except (ValueError, RuntimeError):
+            body = None
     body = body if isinstance(body, dict) else {}
     error = body.get('error')
     error = error if isinstance(error, dict) else {}
@@ -137,11 +140,20 @@ def write_diagnostic(path, event):
         logging.warning('Could not write model call metadata')
 
 
-def record_speech_diagnostic(path, response, attempt):
+def record_speech_diagnostic(path, response, attempt, result=None):
+    try:
+        if result is None:
+            result = response.json()
+        usage = result.get('usage') if isinstance(result, dict) else None
+    except ValueError:
+        usage = None
+    usage = usage if isinstance(usage, dict) else {}
+    counts = {'speech_' + key: usage[key] for key in ('input_tokens', 'output_tokens')
+              if type(usage.get(key)) is int and usage[key] >= 0}
     write_diagnostic(path, {
         'created_at': datetime.now(timezone.utc).isoformat(), 'task': '语音合成',
         'provider': 'bailian', 'model': get_config()['tts_model'],
-        'attempt': attempt, **service_error_details(response),
+        'attempt': attempt, **service_error_details(response, result), **counts,
     })
 
 
@@ -220,6 +232,11 @@ def chat_json(system, user_content, *, max_tokens=None, task='论文规划', dia
         for attempt in range(3):
             try:
                 response = client.post(base + '/compatible-mode/v1/chat/completions', headers={'Authorization': f'Bearer {key}'}, json=payload)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                if attempt < 2:
+                    time.sleep(attempt + 1)
+                    continue
+                raise ProviderError(f'{task}：无法建立百炼 API 连接（{type(exc).__name__}）。') from None
             except httpx.RequestError:
                 raise ProviderError(f'{task}：无法连接百炼北京 API，请检查网络或代理。请求未自动重发。') from None
             try:
@@ -303,7 +320,45 @@ def normalize_wav(data):
     return bytes(finalized)
 
 
-def synthesize(text, language, output: Path, *, diagnostics_path=None):
+def speech_stream(base, key, payload, diagnostics_path):
+    chunks, size = [], 0
+    with httpx.Client(timeout=httpx.Timeout(45, connect=10), follow_redirects=False) as client:
+        try:
+            with client.stream('POST', base + '/api/v1/services/audio/tts/SpeechSynthesizer',
+                               headers={'Authorization': f'Bearer {key}', 'X-DashScope-SSE': 'enable'},
+                               json=payload) as response:
+                if not response.is_success:
+                    response.read()
+                    record_speech_diagnostic(diagnostics_path, response, 1)
+                    raise problem(response.status_code, '语音合成', response)
+                for line in response.iter_lines():
+                    if not line.startswith('data:'):
+                        continue
+                    result = json.loads(line[5:])
+                    if service_failed(result):
+                        record_speech_diagnostic(diagnostics_path, response, 1, result)
+                        code = redact(result.get('code') or 'error')[:80]
+                        message = redact(result.get('message') or result.get('error') or '')[:240]
+                        raise ProviderError(f'百炼流式语音未完成（{code}）：{message}')
+                    event = result.get('output') or {}
+                    if event.get('type') == 'sentence-synthesis':
+                        encoded = (event.get('audio') or {}).get('data') or ''
+                        chunk = base64.b64decode(encoded, validate=True)
+                        size += len(chunk)
+                        if size > MAX_AUDIO_BYTES:
+                            raise ProviderError('配音文件超过64MB。')
+                        chunks.append(chunk)
+                    if event.get('finish_reason') == 'stop':
+                        record_speech_diagnostic(diagnostics_path, response, 1, result)
+                        return b''.join(chunks)
+        except httpx.RequestError as exc:
+            raise ProviderError(f'百炼流式配音连接失败（{type(exc).__name__}），可从已保存的语音片段重试。') from None
+        except (ValueError, TypeError, AttributeError, binascii.Error):
+            raise ProviderError('百炼流式配音数据格式无效。') from None
+    raise ProviderError('百炼流式配音在完成前断开，请重试。')
+
+
+def synthesize(text, language, output: Path, *, diagnostics_path=None, streaming=False):
     if language not in ('zh', 'en') or not isinstance(text, str) or not 1 <= len(text) <= 10_000:
         raise ProviderError('配音文字或语言无效。')
     base, key = api_base(), token()
@@ -312,6 +367,14 @@ def synthesize(text, language, output: Path, *, diagnostics_path=None):
         'text': text, 'voice': voice, 'format': 'wav', 'sample_rate': 24000,
         'language_hints': [language],
     }}
+    if streaming:
+        data = speech_stream(base, key, payload, diagnostics_path)
+    else:
+        data = speech_file(base, key, payload, diagnostics_path)
+    return save_speech(data, output)
+
+
+def speech_file(base, key, payload, diagnostics_path):
     with httpx.Client(timeout=httpx.Timeout(240, connect=20), follow_redirects=False) as client:
         for attempt in range(3):
             try:
@@ -336,7 +399,11 @@ def synthesize(text, language, output: Path, *, diagnostics_path=None):
             except (KeyError, TypeError, AttributeError):
                 raise ProviderError('百炼配音服务返回了无效结构，已停止生成。') from None
             break
-    data = normalize_wav(download_audio(url))
+    return download_audio(url)
+
+
+def save_speech(data, output):
+    data = normalize_wav(data)
     if not 44 < len(data) <= MAX_AUDIO_BYTES or data[:4] != b'RIFF' or data[8:12] != b'WAVE' or struct.unpack_from('<I', data, 4)[0] != len(data) - 8:
         raise ProviderError('配音服务没有返回有效 WAV，已停止生成。')
     try:

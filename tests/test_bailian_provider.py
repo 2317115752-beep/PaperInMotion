@@ -1,4 +1,5 @@
 """Exercise Bailian HTTP contracts offline; no requests leave MockTransport."""
+import base64
 from contextlib import contextmanager
 import io
 import json
@@ -66,6 +67,44 @@ def transport(handler):
 
 
 class BailianProviderTests(unittest.TestCase):
+    def test_streamed_audio_is_validated_without_downloading_the_temporary_url(self):
+        audio = wav_bytes()
+        results = [
+            {'output': {'type': 'sentence-synthesis',
+                        'audio': {'data': base64.b64encode(chunk).decode()}}}
+            for chunk in (audio[:57], audio[57:])
+        ]
+        final = {'request_id': 'speech-stream-test',
+                 'output': {'finish_reason': 'stop', 'audio': {'url': AUDIO_URL}},
+                 'usage': {'input_tokens': 2, 'output_tokens': 10}}
+        seen = []
+
+        def handle(request):
+            seen.append(request.method)
+            self.assertEqual(request.headers['x-dashscope-sse'], 'enable')
+            body = ''.join('data: ' + json.dumps(result) + '\n\n' for result in [*results, final])
+            return httpx.Response(200, text=body, headers={'content-type': 'text/event-stream'})
+
+        with settings(), transport(handle), tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary)/'speech.wav'
+            logs = Path(temporary)/'calls.jsonl'
+            self.assertEqual(synthesize('Streaming test.', 'en', target, streaming=True, diagnostics_path=logs), .5)
+            self.assertEqual(target.read_bytes(), audio)
+            self.assertEqual(json.loads(logs.read_text())['speech_output_tokens'], 10)
+        self.assertEqual(seen, ['POST'])
+
+    def test_interrupted_stream_leaves_no_audio_checkpoint(self):
+        def handle(request):
+            item = {'output': {'type': 'sentence-synthesis',
+                               'audio': {'data': base64.b64encode(wav_bytes()).decode()}}}
+            return httpx.Response(200, text='data: ' + json.dumps(item) + '\n\n')
+
+        with settings(), transport(handle), tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary)/'speech.wav'
+            with self.assertRaises(ProviderError):
+                synthesize('Interrupted stream.', 'en', target, streaming=True)
+            self.assertFalse(target.exists())
+
     def test_tts_contract_both_languages_and_download_never_receives_auth_or_cookie(self):
         for language, text in [('zh', '欢迎学习这篇论文。'), ('en', 'Welcome to this paper lesson.')]:
             with self.subTest(language=language):

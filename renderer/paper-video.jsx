@@ -1,83 +1,546 @@
 import React from 'react';
-import {AbsoluteFill,Audio,Sequence,staticFile,useCurrentFrame,interpolate} from 'remotion';
-const C={bg:'#F7F4ED',ink:'#203048',purple:'#6353BB',orange:'#D9A365',muted:'#93909B',line:'#E3DED8',pale:'#EEEAFA'};
-const font='-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif';
-const choose=(zh,a,b)=>zh?a:b;
-const text=(v,max=120)=>typeof v==='string'?v.length>max?v.slice(0,max-1)+'…':v:'';
-const appearance=(frame,delay=0)=>interpolate(frame,[delay,delay+14],[0,1],{extrapolateLeft:'clamp',extrapolateRight:'clamp'});
-const fmt=n=>Number.isFinite(n)?Number(n.toFixed(3)):'—';
+import {AbsoluteFill, Audio, Img, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import './video.css';
 
-function Reveal({children,delay=0,style={}}){const frame=useCurrentFrame();const p=appearance(frame,delay);return <div style={{opacity:p,transform:`translateY(${(1-p)*16}px)`,...style}}>{children}</div>}
-function Matrix({value,label,color=C.ink,max=4,size=23}){
-  const values=Array.isArray(value)?value.slice(0,max):[];
-  const rows=values.map(v=>Array.isArray(v)?v.slice(0,max):[v]);
-  return <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:11,color}}><span style={{fontWeight:650,fontSize:18}}>{label}</span><div style={{borderLeft:`2px solid ${color}`,borderRight:`2px solid ${color}`,padding:'7px 14px',display:'grid',gap:8,alignContent:'center',minHeight:48}}>{rows.map((r,i)=><div key={i} style={{display:'flex',gap:14,justifyContent:'center',fontSize:size,fontVariantNumeric:'tabular-nums'}}>{r.map((n,j)=><span key={j} style={{minWidth:23,textAlign:'center'}}>{fmt(n)}</span>)}</div>)}</div></div>
+const WIDTH = 1920;
+const HEIGHT = 1080;
+const EASE = value => 1 - (1 - value) ** 3;
+
+const label = (zh, chinese, english) => zh ? chinese : english;
+const list = value => Array.isArray(value) ? value : value ? [value] : [];
+const limit = (value, max) => typeof value === 'string' ? value.length > max ? value.slice(0, max - 1) + '…' : value : '';
+const number = value => Number.isFinite(value) ? Number(value.toPrecision(5)).toString() : '—';
+
+const LOWER_SCRIPTS = Object.fromEntries(Array.from('₀₁₂₃₄₅₆₇₈₉ₓᵧₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥ₊₋₌').map((char, i) => [char, '0123456789xyaehijklmnoprstuv+−='[i]]));
+const UPPER_SCRIPTS = Object.fromEntries(Array.from('⁰¹²³⁴⁵⁶⁷⁸⁹ᵀⁿⁱᵏ⁺⁻⁼').map((char, i) => [char, '0123456789Tnik+−='[i]]));
+
+function MathExpression({text}) {
+  const chars = Array.from(text);
+  const tokens = [];
+  for (const character of chars) {
+    const lower = LOWER_SCRIPTS[character];
+    const upper = UPPER_SCRIPTS[character];
+    const type = lower ? 'sub' : upper ? 'sup' : 'normal';
+    const glyph = lower || upper || character;
+    const previous = tokens.at(-1);
+    if (previous?.type === type) previous.text += glyph;
+    else tokens.push({type, text: glyph});
+  }
+  return tokens.map((token, index) => {
+    if (token.type === 'sub') return <sub key={index}>{token.text}</sub>;
+    if (token.type === 'sup') return <sup key={index}>{token.text}</sup>;
+    return <React.Fragment key={index}>{token.text}</React.Fragment>;
+  });
 }
-function Vector({values,color=C.purple}){return <span style={{color,fontSize:25,whiteSpace:'nowrap',fontVariantNumeric:'tabular-nums'}}>[{(Array.isArray(values)?values:[]).slice(0,4).map(fmt).join(', ')}]</span>}
-function Flow({labels,frame,zh}){
-  const nodes=(labels?.length?labels:[choose(zh,'输入','Input'),choose(zh,'方法','Method'),choose(zh,'输出','Output')]).slice(0,5);
-  const active=Math.min(nodes.length-1,Math.floor(frame/28));
-  return <div style={{display:'flex',alignItems:'center',width:'100%',gap:18}}>{nodes.map((n,i)=><React.Fragment key={i}>{i>0&&<span style={{color:C.orange,fontSize:30}}>→</span>}<Reveal delay={i*16} style={{flex:1,minWidth:0,border:`1px solid ${active===i?C.purple:C.line}`,background:active===i?C.purple:'#fff',borderRadius:18,padding:'24px 18px',minHeight:155,color:active===i?'white':C.ink}}><div style={{fontSize:12,opacity:.5,marginBottom:25}}>{String(i+1).padStart(2,'0')}</div><div style={{fontSize:nodes.length>3?23:28,fontWeight:550,lineHeight:1.5,overflowWrap:'anywhere'}}>{text(n,nodes.length>3?38:60)}</div></Reveal></React.Fragment>)}</div>
+
+function entrance(frame, delay, frames = 18) {
+  return interpolate(frame, [delay, delay + frames], [0, 1], {
+    easing: EASE,
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
 }
-function Diagram({frame,zh}){
-  return <svg viewBox="0 0 300 310" width="100%" height="100%">
-    <circle cx="150" cy="155" r="130" fill="none" stroke="#E5DFD6"/><circle cx="150" cy="155" r="105" fill="none" stroke="#E9E4DD"/>
-    {[0,1].map(i=><g key={i}><path d={`M150 ${95+i*92} V${116+i*92}`} stroke={C.purple} strokeWidth="2"/><circle cx="150" cy={96+i*92+frame%20} r="4" fill={C.orange}/></g>)}
-    {[choose(zh,'论文证据','Paper evidence'),choose(zh,'核心方法','Core mechanism'),choose(zh,'直观理解','Clear understanding')].map((s,i)=><g key={i} opacity={appearance(frame,i*15)}><rect x="33" y={32+i*92} width="234" height="62" rx="15" fill={i===1?C.purple:'#fff'} stroke={i===1?C.purple:C.line}/><text x="150" y={70+i*92} textAnchor="middle" fontSize="18" fontFamily={font} fill={i===1?'white':C.ink}>{s}</text></g>)}
-  </svg>
-}
-function LowRank({scene,zh}){
-  const e=scene.example, f=useCurrentFrame();
-  const stage=Math.min(3,Math.floor(f/(scene.duration_frames/4)));
-  const scaled=e.scale!==1;
-  return <div style={{display:'grid',gridTemplateColumns:'625px 447px',gap:32,height:'100%'}}>
-    <div><Reveal style={{fontSize:38,fontWeight:600,marginBottom:20}}>y = <span style={{color:C.muted}}>W₀x</span> + <span style={{color:C.purple}}>{scaled?'s·':''}B(Ax)</span></Reveal>
-      <Reveal delay={8} style={{display:'flex',justifyContent:'space-around',alignItems:'center',background:'#fff',border:`1px solid ${C.line}`,borderRadius:18,padding:'18px 14px'}}><Matrix value={e.base} label="W₀" color={C.muted}/><Matrix value={e.A} label="A" color={C.purple}/><Matrix value={e.B} label="B" color={C.purple}/></Reveal>
-      <Reveal delay={14} style={{display:'flex',alignItems:'center',gap:20,marginTop:18,padding:'18px 24px',background:'#fff',border:`1px solid ${C.line}`,borderRadius:15}}><span style={{fontSize:23}}>x =</span><Vector values={e.input}/><span style={{marginLeft:'auto',color:C.muted,fontSize:15}}>{choose(zh,'玩具输入','Toy input')}</span></Reveal>
-      {scaled&&<div style={{fontSize:16,color:C.muted,marginTop:12}}>s = {fmt(e.scale)}</div>}
+
+function Reveal({children, delay = 0, className = '', style}) {
+  const frame = useCurrentFrame();
+  const progress = entrance(frame, delay);
+  return (
+    <div
+      className={className}
+      style={{opacity: progress, transform: 'translateY(' + (1 - progress) * 21 + 'px)', ...style}}
+    >
+      {children}
     </div>
-    <div style={{display:'flex',flexDirection:'column',gap:12}}>{[
-      ['W₀x',e.baseline,choose(zh,'基线输出','Base output')],['Ax',e.hidden,choose(zh,'低维表示','Low-rank state')],[scaled?'s·B(Ax)':'B(Ax)',e.delta,choose(zh,'更新分支','Update')],['y',e.output,choose(zh,'最终输出','Final output')]
-    ].map(([label,values,desc],i)=><Reveal key={i} delay={12+i*14} style={{height:77,display:'flex',alignItems:'center',gap:10,padding:'14px 17px',borderRadius:16,border:`1px solid ${i===3?C.purple:C.line}`,background:i===3?C.purple:stage===i?C.pale:'#fff',color:i===3?'white':C.ink}}><span style={{fontSize:22,minWidth:76,fontWeight:550}}>{label}</span><Vector values={values} color={i===3?'white':C.purple}/><span style={{marginLeft:'auto',fontSize:13,maxWidth:93,lineHeight:1.5,color:i===3?'#DCD5F5':C.muted}}>{desc}</span></Reveal>)}</div>
-  </div>
+  );
 }
-function Attention({scene,zh}){
-  const e=scene.example;
-  return <div style={{height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',gap:25}}><Reveal style={{fontSize:33,fontWeight:550,color:C.purple}}>Attention(Q, K, V) = softmax(QKᵀ / √d) V</Reveal><div style={{display:'flex',justifyContent:'space-around',alignItems:'center',padding:'25px 15px',background:'#fff',border:`1px solid ${C.line}`,borderRadius:20}}>{[['Q',e.Q],['K',e.K],['V',e.V],[choose(zh,'权重','Weights'),e.weights],[choose(zh,'输出','Output'),e.output]].map(([label,value],i)=><Reveal key={i} delay={i*16}><Matrix value={value} label={label} color={i>2?C.purple:C.ink} size={22}/></Reveal>)}</div><div style={{fontSize:18,color:C.muted}}>{choose(zh,'玩具示例：softmax 权重按行归一化，数值由 Python 执行。','Toy example: row-normalized softmax weights, computed in Python.')}</div></div>
+
+function stepTimes(scene, count) {
+  const beats = list(scene.beats).filter(beat => Number.isFinite(beat?.start_frame));
+  if (beats.length === count) return beats.map(beat => beat.start_frame);
+  const cues = list(scene.cues);
+  return Array.from({length: count}, (_, index) => {
+    if (!cues.length) return scene.duration_frames * index / count;
+    const position = index * cues.length / count;
+    const cue = cues[Math.floor(position)];
+    return cue.start_frame + (cue.end_frame - cue.start_frame) * (position % 1);
+  });
 }
-function Content({scene,manifest,zh,frame}){
-  const bullets=(scene.bullets||[]).slice(0,4);
-  if(scene.example?.kind==='low_rank'&&scene.visual_type==='matrix')return <LowRank scene={scene} zh={zh}/>;
-  if(scene.example?.kind==='scaled_dot_attention'&&['matrix','equation'].includes(scene.visual_type))return <Attention scene={scene} zh={zh}/>;
-  if(scene.visual_type==='title')return <div style={{height:'100%',display:'grid',gridTemplateColumns:'730px 320px',gap:54,alignItems:'center'}}><div><Reveal style={{fontSize:13,letterSpacing:3,color:C.purple,marginBottom:25}}>{choose(zh,'从论文，到理解','FROM PAPER TO UNDERSTANDING')}</Reveal><Reveal delay={8} style={{fontSize:zh?60:54,fontWeight:650,lineHeight:1.2,letterSpacing:-1.3,overflowWrap:'anywhere'}}>{text(scene.title,zh?40:80)}</Reveal><Reveal delay={16} style={{width:128,height:5,background:C.orange,borderRadius:2,margin:'27px 0'}}/><Reveal delay={24} style={{fontSize:25,lineHeight:1.6,color:C.muted}}>{text(bullets[0]||manifest.paper_title,zh?65:120)}</Reveal></div><Diagram frame={frame} zh={zh}/></div>;
-  if(scene.visual_type==='flow')return <div style={{height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',gap:35}}><Flow labels={scene.nodes?.length?scene.nodes:bullets} frame={frame} zh={zh}/><Reveal delay={20} style={{fontSize:24,color:C.muted}}>{text(scene.formula||bullets[0],120)}</Reveal></div>;
-  if(scene.visual_type==='equation')return <div style={{height:'100%',display:'grid',gridTemplateColumns:'1.3fr 1fr',gap:35,alignItems:'center'}}><Reveal style={{background:'#fff',border:`1px solid ${C.line}`,borderRadius:22,padding:35,minHeight:235,display:'flex',flexDirection:'column',justifyContent:'center'}}><span style={{fontSize:12,color:C.purple,letterSpacing:2,marginBottom:25}}>{choose(zh,'核心关系','CORE RELATIONSHIP')}</span><span style={{fontSize:(scene.formula||'').length>65?28:36,lineHeight:1.6,overflowWrap:'anywhere',fontFamily:'Georgia,"PingFang SC",serif'}}>{text(scene.formula||bullets[0],160)}</span></Reveal><Points bullets={bullets} zh={zh}/></div>;
-  if(scene.visual_type==='comparison')return <div style={{height:'100%',display:'grid',gridTemplateColumns:'1fr 1fr',gap:28,alignItems:'center'}}>{[bullets.slice(0,Math.ceil(bullets.length/2)),bullets.slice(Math.ceil(bullets.length/2))].map((items,i)=><Reveal key={i} delay={i*18} style={{padding:28,minHeight:285,borderRadius:20,border:`1px solid ${C.line}`,background:i?C.pale:'#fff'}}><div style={{fontSize:12,color:C.purple,paddingBottom:18,marginBottom:20,borderBottom:`1px solid ${C.line}`,letterSpacing:2}}>{choose(zh,`视角 ${i+1}`,`PERSPECTIVE ${i+1}`)}</div><Points bullets={items} zh={zh}/></Reveal>)}</div>;
-  return <div style={{height:'100%',display:'grid',gridTemplateColumns:'710px 350px',gap:44,alignItems:'center'}}><Points bullets={bullets.length?bullets:[scene.title]} zh={zh}/><Diagram frame={frame} zh={zh}/></div>
+
+function activeStep(scene, frame, count) {
+  const latest = stepTimes(scene, count).findLastIndex(start => start <= frame);
+  return Math.max(0, latest);
 }
-function Points({bullets,zh}){return <div style={{display:'flex',flexDirection:'column',gap:22}}>{bullets.map((b,i)=><Reveal key={i} delay={12+i*20} style={{display:'flex',gap:15,alignItems:'flex-start'}}><span style={{flexShrink:0,width:28,height:28,borderRadius:8,background:C.purple,color:'white',display:'grid',placeItems:'center',fontSize:12,marginTop:5}}>{i+1}</span><span style={{fontSize:26,lineHeight:1.55,fontWeight:450,overflowWrap:'anywhere'}}>{text(b,zh?50:105)}</span></Reveal>)}</div>}
-function subtitleChunks(narration,zh){
-  const parts=(narration||'').match(zh?/[^。！？；\n]+[。！？；]?/g:/[^.!?\n]+[.!?]?/g)||[];
-  const chunks=[];const limit=zh?48:105;
-  for(let part of parts){part=part.trim();while(part.length>limit){let cut=limit;if(!zh){const space=part.lastIndexOf(' ',limit);if(space>limit/2)cut=space;}chunks.push(part.slice(0,cut));part=part.slice(cut).trim();}if(part)chunks.push(part);}
-  return chunks;
+
+function Arrow({active = false, pulseStart}) {
+  const frame = useCurrentFrame();
+  const animated = active && Number.isFinite(pulseStart) && frame >= pulseStart && frame < pulseStart + 15;
+  const progress = animated ? entrance(frame, pulseStart, 14) : 0;
+  return (
+    <svg className={'pim-arrow' + (active ? ' is-active' : '')} viewBox="0 0 72 32" aria-hidden="true">
+      <path d="M2 16h62M54 5l12 11-12 11" fill="none" stroke="currentColor" strokeWidth="2.5" />
+      {animated && <circle cx={3 + progress * 57} cy="16" r="4.5" fill="currentColor" />}
+    </svg>
+  );
 }
-function Scene({scene,manifest,index,start,total}){
-  const f=useCurrentFrame(),zh=manifest.language==='zh';
-  const chunks=subtitleChunks(scene.narration,zh),weights=chunks.reduce((s,c)=>s+c.length,0);
-  const at=Math.min(1,f/Math.max(1,(scene.audio_duration||scene.duration_frames/24)*24))*weights;
-  let current='',sum=0;for(const chunk of chunks){sum+=chunk.length;if(at<=sum){current=chunk;break;}}
-  const title=scene.visual_type==='title';
-  return <AbsoluteFill style={{background:C.bg,color:C.ink,fontFamily:font,overflow:'hidden'}}>
-    <div style={{position:'absolute',right:-110,top:-330,width:560,height:560,border:'1px solid #E9E2D8',borderRadius:'50%'}}/>
-    <div style={{position:'absolute',left:64,right:64,top:32,display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:14,letterSpacing:1.7,fontWeight:650,display:'flex',alignItems:'center',gap:10}}><span style={{width:13,height:13,background:C.purple,borderRadius:4}}/>PAPER IN MOTION</span><span style={{display:'flex',gap:20,fontSize:12,color:C.muted}}>{manifest.is_demo&&<span>{choose(zh,'预制演示 · 无语音','PREPARED DEMO · NO AUDIO')}</span>}<span>{String(index+1).padStart(2,'0')} / {String(manifest.scenes.length).padStart(2,'0')}</span></span></div>
-    <div style={{position:'absolute',left:64,right:64,top:95,display:'flex',alignItems:'center',gap:18}}><span style={{fontSize:12,color:C.purple,border:'1px solid #D6CCE9',padding:'6px 12px',borderRadius:30}}>{choose(zh,scene.visual_type==='result'?'重点回顾':'论文讲解',scene.visual_type==='result'?'TAKEAWAY':'PAPER EXPLAINER')}</span><span style={{flex:1,height:1,background:C.line}}/></div>
-    {!title&&<Reveal style={{position:'absolute',left:64,right:64,top:151,fontSize:zh?36:34,fontWeight:600,lineHeight:1.25,maxHeight:86,overflow:'hidden'}}>{text(scene.title,zh?45:90)}</Reveal>}
-    <div style={{position:'absolute',left:64,right:64,top:title?155:231,bottom:120}}><Content scene={scene} manifest={manifest} zh={zh} frame={f}/></div>
-    <div style={{position:'absolute',left:64,right:64,bottom:52,minHeight:35,display:'flex',alignItems:'center',justifyContent:'center',textAlign:'center',fontSize:zh?22:20,lineHeight:1.4}}>{current}</div>
-    <div style={{position:'absolute',left:64,right:64,bottom:19,display:'flex',justifyContent:'space-between',gap:25,fontSize:11,color:C.muted}}><span style={{maxWidth:790,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{manifest.paper_title||manifest.title}</span><span>{scene.source_pages?.length?choose(zh,`来源：第${scene.source_pages.join('、')}页`,`Source: p. ${scene.source_pages.join(', ')}`):choose(zh,'示例计算 · 非论文实验数据','Toy example · not empirical data')}</span></div>
-    <div style={{position:'absolute',left:0,right:0,bottom:0,height:4,background:'#E4DDD5'}}><div style={{height:'100%',width:`${Math.min(100,(start+f+1)/total*100)}%`,background:C.purple}}/></div>
-    {scene.audio_file&&<Audio src={staticFile(scene.audio_file)}/>}
-  </AbsoluteFill>
+
+function TitleArtwork() {
+  const frame = useCurrentFrame();
+  const p = entrance(frame, 6, 38);
+  return (
+    <svg className="pim-title-art" viewBox="0 0 630 640" aria-hidden="true">
+      <defs>
+        <pattern id="pim-grid" width="30" height="30" patternUnits="userSpaceOnUse">
+          <path d="M30 0H0V30" fill="none" stroke="var(--grid)" strokeWidth="1" />
+        </pattern>
+      </defs>
+      <rect x="0" y="0" width="630" height="640" rx="12" fill="url(#pim-grid)" />
+      <circle cx="315" cy="320" r="228" fill="none" stroke="var(--line)" strokeWidth="1" />
+      <circle cx="315" cy="320" r="173" fill="none" stroke="var(--line)" strokeWidth="1" strokeDasharray="4 8" />
+      <path d="M88 320h454M315 92v456" stroke="var(--line)" strokeWidth="1" />
+      <g transform={'translate(0 ' + (1 - p) * 52 + ')'} opacity={p}>
+        <path d="M146 274l182-104 152 88-183 104z" fill="var(--accent)" fillOpacity=".16" stroke="var(--accent)" strokeWidth="2" />
+        <path d="M146 318l182-104 152 88-183 104z" fill="var(--accent)" fillOpacity=".4" stroke="var(--accent)" strokeWidth="2" />
+        <path d="M146 364l182-104 152 88-183 104z" fill="var(--accent)" stroke="var(--accent)" strokeWidth="2" />
+        <path d="M146 364v35l151 87 183-104v-34l-183 104z" fill="var(--accentDeep)" opacity=".88" />
+        <path d="M185 342l150 87m-108-111 149 87m-105-111 149 87m-108-110 150 87M185 385l182-104m-145 126 182-104m-144 125 182-104" stroke="var(--onAccent)" strokeOpacity=".4" strokeWidth="1.5" />
+        <circle cx="297" cy="452" r="7" fill="var(--warm)" />
+        <circle cx="328" cy="170" r="7" fill="var(--accent)" />
+      </g>
+      <circle cx={315 + 228 * Math.cos(frame / 90)} cy={320 + 228 * Math.sin(frame / 90)} r="5" fill="var(--warm)" />
+    </svg>
+  );
 }
-export function PaperVideo({manifest}){const total=manifest.scenes.reduce((s,v)=>s+v.duration_frames,0);let start=0;return <AbsoluteFill>{manifest.scenes.map((scene,i)=>{const from=start;start+=scene.duration_frames;return <Sequence key={i} from={from} durationInFrames={scene.duration_frames}><Scene scene={scene} manifest={manifest} index={i} start={from} total={total}/></Sequence>})}</AbsoluteFill>}
+
+function Title({scene, zh}) {
+  return (
+    <div className="pim-title-grid">
+      <div>
+        <Reveal className="pim-kicker">{label(zh, '论文导读', 'RESEARCH EXPLAINER')}</Reveal>
+        <Reveal delay={5} className={'pim-title ' + (scene.title?.length > (zh ? 23 : 58) ? 'is-long' : '')}>
+          {limit(scene.title, zh ? 64 : 130)}
+        </Reveal>
+        {scene.bullets?.[0] && <Reveal delay={13} className="pim-lead">{limit(scene.bullets[0], 145)}</Reveal>}
+      </div>
+      <TitleArtwork />
+    </div>
+  );
+}
+
+function Points({items, compact = false, step = -1}) {
+  return (
+    <div className={'pim-points' + (compact ? ' is-compact' : '')}>
+      {list(items).filter(item => typeof item === 'string' && item.trim()).slice(0, 4).map((item, index) => (
+        <Reveal key={index} delay={6 + index * 6} className={'pim-point' + (step === index ? ' is-active' : '')}>
+          <span className="pim-point-marker" />
+          <span>{limit(item, 140)}</span>
+        </Reveal>
+      ))}
+    </div>
+  );
+}
+
+function Flow({scene, zh, frame}) {
+  const nodes = list(scene.nodes).length ? scene.nodes : list(scene.bullets);
+  if (nodes.length < 2) return <Takeaways scene={scene} zh={zh} frame={frame} />;
+  const labels = nodes.slice(0, 5);
+  const active = activeStep(scene, frame, labels.length);
+  const starts = stepTimes(scene, labels.length);
+  return (
+    <div className="pim-flow-layout">
+      <div className="pim-flow">
+        {labels.map((node, index) => (
+          <React.Fragment key={index}>
+            {index > 0 && <Arrow active={index <= active} pulseStart={starts[index]} />}
+            <Reveal delay={index * 7} className={'pim-flow-card' + (index === active ? ' is-active' : '')}>
+              <span className="pim-flow-step">{String(index + 1).padStart(2, '0')}</span>
+              <span>{limit(node, 74)}</span>
+            </Reveal>
+          </React.Fragment>
+        ))}
+      </div>
+      {scene.formula && <Reveal delay={10} className="pim-flow-formula"><MathExpression text={limit(scene.formula, 160)} /></Reveal>}
+      <Points items={list(scene.bullets).filter(item => !labels.includes(item)).slice(0, 2)} compact />
+    </div>
+  );
+}
+
+function Equation({scene, zh, frame}) {
+  const equations = list(scene.equations).filter(item => item?.expression).slice(0, 3);
+  if (!equations.length && scene.formula) equations.push({expression: scene.formula});
+  if (!equations.length) return <Takeaways scene={scene} zh={zh} frame={frame} />;
+  const active = activeStep(scene, frame, equations.length);
+  return (
+    <div className={'pim-equation-grid' + (!scene.bullets?.length ? ' is-solo' : '')}>
+      <Reveal className="pim-equation-panel">
+        {equations.map(({label: name, expression}, index) => (
+          <div key={index} className={'pim-equation' + (index === active ? ' is-active' : '')}>
+            {name && <span className="pim-equation-label">{limit(name, 56)}</span>}
+            <span className={expression.length > 70 ? 'is-long' : ''}><MathExpression text={limit(expression, 180)} /></span>
+          </div>
+        ))}
+      </Reveal>
+      <Points items={scene.bullets} compact />
+    </div>
+  );
+}
+
+function Compare({scene, zh, frame}) {
+  const items = list(scene.bullets);
+  const comparison = scene.comparison;
+  if (!comparison?.baseline || !comparison?.proposed) {
+    return <Takeaways scene={{...scene, bullets: items}} zh={zh} frame={frame} />;
+  }
+  const sides = [
+    {title: label(zh, '基线', 'Baseline'), items: comparison.baseline},
+    {title: label(zh, '论文方法', 'Proposed method'), items: comparison.proposed},
+  ];
+  return (
+    <div className="pim-comparison">
+      {sides.map((side, index) => (
+        <Reveal key={side.title} delay={index * 8} className={'pim-comparison-card' + (index === 1 ? ' is-proposed' : '')}>
+          <h3>{side.title}</h3>
+          <Points compact items={side.items} />
+        </Reveal>
+      ))}
+    </div>
+  );
+}
+
+function exampleStates(example) {
+  if (list(example.states).length) {
+    return example.states.filter(state => state?.label && Array.isArray(state.values)).slice(0, 8);
+  }
+  if (example.kind === 'low_rank') {
+    return [
+      {label: 'x', values: example.input},
+      {label: 'W₀x', values: example.baseline},
+      {label: 'Ax', values: example.hidden},
+      {label: 'Δy', values: example.delta},
+      {label: 'y', values: example.output},
+    ];
+  }
+  if (example.kind === 'scaled_dot_attention') {
+    return [
+      {label: 'QKᵀ / √d', values: example.scores},
+      {label: 'softmax(scores)', values: example.weights},
+      {label: 'softmax(scores) × V', values: example.output},
+    ];
+  }
+  return list(example.steps).filter(step => Array.isArray(step?.result)).slice(0, 8)
+    .map(step => ({label: step.formula, values: step.result}));
+}
+
+function DataGrid({values}) {
+  const rows = list(values);
+  const isVector = !Array.isArray(rows[0]);
+  const display = isVector ? [rows.slice(0, 6)] : rows.slice(0, 4).map(row => list(row).slice(0, 6));
+  const truncated = isVector ? rows.length > 6 : rows.length > 4 || rows.some(row => list(row).length > 6);
+  return (
+    <div className="pim-matrix-values">
+      {display.map((row, index) => (
+        <div key={index} className="pim-matrix-row">
+          {row.map((value, column) => <span key={column}>{number(value)}</span>)}
+        </div>
+      ))}
+      {truncated && <span>…</span>}
+    </div>
+  );
+}
+
+function WorkedHeader({zh}) {
+  return (
+    <Reveal className="pim-executed-header">
+      <span className="pim-kicker">{label(zh, '可执行示例', 'WORKED EXAMPLE')}</span>
+      <span>{label(zh, '示例数值', 'Illustrative values')}</span>
+    </Reveal>
+  );
+}
+
+function StateCard({name, values, active, delay = 0}) {
+  return (
+    <Reveal delay={delay} className={'pim-state-card' + (active ? ' is-active' : '')}>
+      <div className="pim-state-label">{name}</div>
+      <DataGrid values={values} />
+    </Reveal>
+  );
+}
+
+function LoRA({scene, zh, frame}) {
+  const example = scene.example;
+  const active = activeStep(scene, frame, 4);
+  const starts = stepTimes(scene, 4);
+  return (
+    <div className="pim-executed-layout">
+      <WorkedHeader zh={zh} />
+      <div className="pim-branches">
+        <div className="pim-branch-input">
+          <StateCard name="x" values={example.input} active={active === 0} />
+          <Arrow active={active > 0} pulseStart={starts[1]} />
+        </div>
+        <div className="pim-branch-paths">
+          <div className="pim-branch-path">
+            <span className="pim-path-label">{label(zh, '冻结路径', 'Frozen path')}</span>
+            <StateCard name="W₀x" values={example.baseline} active={active === 0} delay={5} />
+          </div>
+          <div className="pim-branch-path">
+            <span className="pim-path-label">{label(zh, '低秩更新', 'Low-rank update')}</span>
+            <StateCard name="Ax" values={example.hidden} active={active === 1} delay={7} />
+            <Arrow active={active > 1} pulseStart={starts[2]} />
+            <StateCard name={example.scale === 1 ? 'B(Ax)' : 's·B(Ax)'} values={example.delta} active={active === 2} delay={11} />
+          </div>
+        </div>
+        <div className="pim-branch-output">
+          <div className="pim-merge-path"><span>+</span><Arrow active={active > 2} pulseStart={starts[3]} /></div>
+          <StateCard name="y" values={example.output} active={active === 3} delay={14} />
+        </div>
+      </div>
+      <Reveal delay={16} className="pim-flow-formula">
+        <MathExpression text={example.scale === 1 ? 'y = W₀x + B(Ax)' : 'y = W₀x + s·B(Ax)'} />
+      </Reveal>
+    </div>
+  );
+}
+
+function CropSketch({geometry, highlight, zh}) {
+  const center = [229, 124];
+  const scale = Math.max(0.25, Math.abs(geometry[0]), Math.abs(geometry[1]), Math.abs(geometry[2]));
+  const x = center[0] + 86 * geometry[0] / scale;
+  const y = center[1] + 78 * geometry[1] / scale;
+  const box = 22 + 36 * Math.abs(geometry[2]) / scale;
+  return (
+    <Reveal className="pim-crop">
+      <svg viewBox="0 0 458 248" aria-label={label(zh, '人体框的全图位置示意', 'Schematic of the person box in the full frame')}>
+        <rect x="1" y="1" width="456" height="246" rx="10" fill="var(--surface)" stroke="var(--line)" strokeWidth="2" />
+        <path d="M19 124h420M229 18v212" fill="none" stroke="var(--line)" strokeWidth="1.5" strokeDasharray="4 5" />
+        <path d={'M229 124H' + x + 'V' + y} fill="none" stroke="var(--warm)" strokeWidth={highlight ? 4 : 2} strokeDasharray="6 6" />
+        <circle cx="229" cy="124" r="5.5" fill="var(--warm)" />
+        <rect x={x - box / 2} y={y - box / 2} width={box} height={box} rx="5" fill="var(--accentPale)" stroke="var(--accent)" strokeWidth="3" />
+        <circle cx={x} cy={y} r="4" fill="var(--accent)" />
+      </svg>
+      <span>{label(zh, '原图中心与人体框 · 示意', 'Frame center and box · schematic')}</span>
+    </Reveal>
+  );
+}
+
+function Cliff({scene, zh, frame}) {
+  const example = scene.example;
+  const states = exampleStates(example);
+  const geometry = states.find(state => state.label === 'g')?.values;
+  if (!Array.isArray(geometry) || geometry.length !== 3) return <ExecutedExample scene={scene} zh={zh} frame={frame} />;
+  const appearance = states.find(state => state.label === 'v')?.values;
+  const joined = states.find(state => state.label === '[v; g]')?.values;
+  const active = activeStep(scene, frame, 3);
+  const starts = stepTimes(scene, 3);
+  return (
+    <div className="pim-executed-layout">
+      <WorkedHeader zh={zh} />
+      <div className="pim-cliff-layout">
+        <CropSketch geometry={geometry} highlight={active === 0} zh={zh} />
+        <div className="pim-branch-paths">
+          <div className="pim-branch-path">
+            <span className="pim-path-label">{label(zh, '仅裁剪', 'Crop only')}</span>
+            <StateCard name="v" values={appearance} active={active === 0} delay={3} />
+            <Arrow active={active > 0} pulseStart={starts[1]} />
+            <StateCard name={label(zh, '基线输出', 'Baseline output')} values={example.baseline} active={active === 2} delay={8} />
+          </div>
+          <div className="pim-branch-path">
+            <span className="pim-path-label">{label(zh, '外观＋几何', 'Appearance + geometry')}</span>
+            <StateCard name="g" values={geometry} active={active === 0} delay={3} />
+            <Arrow active={active > 0} pulseStart={starts[1]} />
+            <StateCard name="[v; g]" values={joined} active={active === 1} delay={7} />
+            <Arrow active={active > 1} pulseStart={starts[2]} />
+            <StateCard name={label(zh, '预测输出', 'Prediction')} values={example.output} active={active === 2} delay={13} />
+          </div>
+        </div>
+      </div>
+      <Reveal delay={15} className="pim-flow-formula"><MathExpression text="g = [cₓ/f, cᵧ/f, b/f]" /></Reveal>
+    </div>
+  );
+}
+
+function ExecutedExample({scene, zh, frame}) {
+  const example = scene.example;
+  const states = exampleStates(example).filter(state => Array.isArray(state.values));
+  if (!states.length) return <Equation scene={scene} zh={zh} frame={frame} />;
+  const active = activeStep(scene, frame, states.length + 1);
+  const compare = active === states.length && Array.isArray(example.baseline) && Array.isArray(example.output);
+  const first = Math.max(0, Math.min(states.length - 3, active - 1));
+  const visibleStates = states.slice(first, first + 3);
+  return (
+    <div className="pim-executed-layout">
+      <WorkedHeader zh={zh} />
+      {compare ? (
+        <div className="pim-state-comparison">
+          <StateCard name={label(zh, '基线结果', 'Baseline result')} values={example.baseline} active={false} />
+          <StateCard name={label(zh, '论文方法结果', 'Proposed method result')} values={example.output} active />
+        </div>
+      ) : (
+        <div className="pim-state-row">
+          {visibleStates.map((state, index) => (
+            <StateCard
+              key={first + index}
+              name={limit(state.label, 72)}
+              values={state.values}
+              active={active === first + index}
+              delay={index * 6}
+            />
+          ))}
+        </div>
+      )}
+      {!!scene.formula && <Reveal className="pim-flow-formula" delay={15}><MathExpression text={limit(scene.formula, 145)} /></Reveal>}
+    </div>
+  );
+}
+
+function Figure({scene, zh}) {
+  return (
+    <div className={'pim-figure-layout' + (!scene.bullets?.length ? ' is-solo' : '')}>
+      <Reveal className="pim-figure">
+        <Img src={staticFile(scene.figure_file)} alt={label(zh, '论文原图', 'Original paper figure')} />
+        {scene.figure_source && <div className="pim-figure-source">{limit(scene.figure_source, 100)}</div>}
+      </Reveal>
+      <Points items={scene.bullets} compact />
+    </div>
+  );
+}
+
+function Table({scene, zh, frame}) {
+  const headers = list(scene.table?.headers).slice(0, 5);
+  const rows = list(scene.table?.rows).slice(0, 7);
+  if (!headers.length || !rows.length) return <Takeaways scene={scene} zh={zh} frame={frame} />;
+  const active = activeStep(scene, frame, rows.length);
+  const dense = rows.length > 5 || headers.length > 4;
+  return (
+    <Reveal className={'pim-table-card' + (dense ? ' is-dense' : '')}>
+      <table className="pim-table">
+        <thead>
+          <tr>{headers.map((cell, index) => <th key={index}>{limit(String(cell ?? ''), 44)}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={index} className={active === index ? 'is-active' : ''}>
+              {headers.map((_, column) => <td key={column}>{limit(String(list(row)[column] ?? ''), 70)}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Reveal>
+  );
+}
+
+function Takeaways({scene, zh, frame}) {
+  const points = list(scene.bullets).filter(item => item?.trim?.());
+  return (
+    <div className={'pim-takeaways' + (scene.visual_type === 'result' ? ' is-result' : '')}>
+      <Points items={points} step={activeStep(scene, frame, points.length)} />
+      {scene.formula && <Reveal className="pim-flow-formula" delay={10}><MathExpression text={limit(scene.formula, 145)} /></Reveal>}
+      {!points.length && !scene.formula && <Reveal className="pim-standalone">{label(zh, '听旁白了解这一节', 'Follow the narration')}</Reveal>}
+    </div>
+  );
+}
+
+function Content({scene, zh, frame}) {
+  const props = {scene, zh, frame};
+  if (scene.visual_type === 'title') return <Title {...props} />;
+  if (scene.visual_type === 'table' && scene.table?.rows?.length) return <Table {...props} />;
+  if (scene.figure_file && ['figure', 'table', 'equation'].includes(scene.visual_type)) return <Figure {...props} />;
+  if (scene.example && ['matrix', 'equation', 'comparison'].includes(scene.visual_type)) {
+    if (scene.example.kind === 'low_rank' && scene.example.input && scene.example.hidden) return <LoRA {...props} />;
+    if (scene.example.kind === 'cliff_geometry') return <Cliff {...props} />;
+    return <ExecutedExample {...props} />;
+  }
+  switch (scene.visual_type) {
+    case 'flow': return <Flow {...props} />;
+    case 'equation': return <Equation {...props} />;
+    case 'comparison': return <Compare {...props} />;
+    case 'table': return <Table {...props} />;
+    default: return <Takeaways {...props} />;
+  }
+}
+
+function captionAt(scene, frame, fps, zh) {
+  if (Array.isArray(scene.cues)) {
+    const cue = scene.cues.find(({start_frame, end_frame}) => frame >= start_frame && frame < end_frame);
+    return cue?.text ?? '';
+  }
+  // Legacy projects did not store cues. Reproduce a readable estimate from their duration.
+  const text = scene.narration ?? '';
+  const parts = text.split(/(?<=[。！？]|[.!?](?!\d))\s*/).flatMap(part => {
+    const words = part.trim();
+    return zh ? words.match(/.{1,34}/gu) ?? [] : words.match(/.{1,92}(?:\s|$)|\S+/gu) ?? [];
+  }).filter(Boolean);
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  const audioFrames = scene.audio_duration > 0 ? Math.min(scene.duration_frames, scene.audio_duration * fps) : scene.duration_frames;
+  if (frame >= audioFrames) return '';
+  const position = frame / Math.max(audioFrames, 1) * total;
+  let cursor = 0;
+  return parts.find(part => {
+    cursor += part.length;
+    return cursor > position;
+  })?.trim() ?? '';
+}
+
+function Scene({scene, manifest, index, start, total}) {
+  const {width, height, fps} = useVideoConfig();
+  const frame = useCurrentFrame();
+  const zh = manifest.language === 'zh';
+  const theme = ['editorial', 'midnight', 'classroom'].includes(manifest.style) ? manifest.style : 'editorial';
+  const title = scene.visual_type === 'title';
+  const caption = captionAt(scene, frame, fps, zh);
+  const evidence = list(scene.evidence);
+  const sourceLabels = [...new Set(evidence.map(item => {
+    const page = item.physical_page ?? item.page;
+    const document = item.document?.toLowerCase() === 'paper'
+      ? label(zh, '论文', 'Paper')
+      : item.document ?? 'PDF';
+    return zh ? document + ' 第 ' + page + ' 页' : document + ' p. ' + page;
+  }))];
+  const sourcePages = list(scene.source_pages);
+  const source = sourceLabels.length
+    ? sourceLabels.slice(0, 3).join(' · ')
+    : sourcePages.length
+      ? label(zh, 'PDF 第 ' + sourcePages.join('、') + ' 页', 'PDF ' + (sourcePages.length === 1 ? 'p. ' : 'pp. ') + sourcePages.join(', '))
+      : manifest.is_demo ? label(zh, '内置演示', 'Built-in demo') : '';
+
+  return (
+    <AbsoluteFill className={'pim-video is-' + theme} lang={zh ? 'zh-Hans' : 'en'}>
+      <div className="pim-stage" style={{transform: 'scale(' + width / WIDTH + ', ' + height / HEIGHT + ')'}}>
+        <header className="pim-video-header">
+          <span className="pim-brand"><span className="pim-brand-icon" /> Paper in Motion</span>
+          <span className="pim-chapter">{String(index + 1).padStart(2, '0')} <span>/</span> {String(manifest.scenes.length).padStart(2, '0')}</span>
+        </header>
+        {!title && (
+          <Reveal className={'pim-scene-title' + (scene.title?.length > (zh ? 27 : 58) ? ' is-long' : '')}>
+            {limit(scene.title, 100)}
+          </Reveal>
+        )}
+        <main className={'pim-scene-content' + (title ? ' is-title' : '')}><Content scene={scene} zh={zh} frame={frame} /></main>
+        {caption && <div className="pim-caption-wrap"><span className={'pim-caption' + (caption.length > (zh ? 48 : 125) ? ' is-long' : '')}>{caption}</span></div>}
+        <footer className="pim-footer">
+          <span>{limit(manifest.paper_title || manifest.title, 120)}</span>
+          {source && <span className="pim-source">{source}</span>}
+        </footer>
+        <div className="pim-video-progress" style={{width: (start + frame + 1) / total * 100 + '%'}} />
+      </div>
+      {scene.audio_file && <Audio src={staticFile(scene.audio_file)} />}
+    </AbsoluteFill>
+  );
+}
+
+export function PaperVideo({manifest}) {
+  const total = manifest.scenes.reduce((sum, scene) => sum + scene.duration_frames, 0);
+  let start = 0;
+  return (
+    <AbsoluteFill>
+      {manifest.scenes.map((scene, index) => {
+        const from = start;
+        start += scene.duration_frames;
+        return (
+          <Sequence key={scene.id ?? index} from={from} durationInFrames={scene.duration_frames}>
+            <Scene scene={scene} manifest={manifest} index={index} start={from} total={total} />
+          </Sequence>
+        );
+      })}
+    </AbsoluteFill>
+  );
+}

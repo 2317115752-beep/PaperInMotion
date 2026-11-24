@@ -1,42 +1,835 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowDownToLine, ArrowRight, ArrowUpRight, AudioLines, BookOpen, Check, ChevronDown, ChevronRight, CircleAlert, CircleCheck, CircleHelp, Clapperboard, Clock3, FileCheck2, FileCode2, FileText, Film, FlaskConical, Globe2, Layers3, LoaderCircle, Play, Plus, Settings2, ShieldCheck, Sparkles, Upload, WandSparkles, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  ArrowDownToLine, ArrowRight, ArrowUpRight, BookOpen, ChevronDown, CircleAlert,
+  CircleCheck, Clapperboard, Clock3, FileText, Film, Globe2, History, Layers3,
+  LoaderCircle, Play, Plus, Settings2, Upload, X,
+} from 'lucide-react';
+import { messages, readUiLanguage, translateBackendMessage, type Language, type Messages } from './i18n';
 
-type Language = 'zh' | 'en';
 type Stage = 'reading' | 'understanding' | 'examples' | 'storyboard' | 'speech' | 'rendering' | 'complete';
-interface Config { model: string; tts_model: string; provider: string; region: string; endpoint_mode: 'shared' | 'workspace'; endpoint_label: string; workspace_configured: boolean; api_configured: boolean; configuration_error: string; max_upload_mb: number }
-interface Scene { id: string | number; title: string; narration: string; visual_type: string; bullets: string[]; source_pages: number[]; formula?: unknown; [key: string]: unknown }
-interface Job { id: string; status: 'queued' | 'running' | 'complete' | 'failed'; stage: Stage; progress: number; message: string; language: Language; duration: number; title: string; error?: string; is_demo: boolean; scenes: Scene[]; files: { video?: string; subtitles?: string; project?: string; storyboard?: string }; warnings: string[]; model: string; created_at: string }
-const stages: { id: Stage; title: string }[] = [{ id: 'reading', title: '读取论文' }, { id: 'understanding', title: '理解核心' }, { id: 'examples', title: '构造示例' }, { id: 'storyboard', title: '编排分镜' }, { id: 'speech', title: '生成配音' }, { id: 'rendering', title: '渲染视频' }];
-const durations = [{ value: 60, label: '1 分钟', desc: '快速了解' }, { value: 120, label: '2 分钟', desc: '抓住重点' }, { value: 180, label: '3 分钟', desc: '深入一点' }];
-const visualLabels: Record<string, string> = { equation: '公式推演', formula: '公式推演', comparison: '对比讲解', pipeline: '流程动画', diagram: '图示讲解', title: '开场介绍', summary: '重点回顾', result: '重点回顾', flow: '流程动画', bullets: '要点讲解', matrix: '矩阵示例', example: '计算示例', bar_chart: '数据对比' };
-async function readResponse<T>(r: Response): Promise<T> { let data: unknown; try { data = await r.json(); } catch { throw new Error('服务返回了无法读取的结果，请检查后端是否启动。'); } if (!r.ok) { const d = data as { detail?: string | { msg: string }[]; error?: string; message?: string }; const detail = typeof d.detail === 'string' ? d.detail : Array.isArray(d.detail) ? d.detail.map(x => x.msg).join('；') : undefined; throw new Error(detail || d.error || d.message || `请求失败（${r.status}）`); } return data as T; }
-const shortModel = (model?: string) => model?.split('/').pop() || '等待连接';
-const outputUrl = (url?: string) => url ? url.startsWith('/') || /^https?:\/\//.test(url) ? url : `/${url}` : undefined;
-const printable = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+type Status = 'queued' | 'running' | 'complete' | 'failed';
+type Style = 'editorial' | 'midnight' | 'classroom';
+type Level = 'introductory' | 'advanced';
+type Topic = 'lora' | 'cliff';
+type RevisionStage = 'understanding' | 'example' | 'storyboard' | 'production';
+type Revision = { stage: RevisionStage; notes?: string; style?: Style; narrations?: Record<string, string> };
+type UploadError = 'invalidPdf' | 'emptyPdf' | 'sizeError' | 'supplementCountError' | 'totalSizeError';
 
-function Brand() { return <div className="brand"><span className="brand-mark"><FileText size={31} strokeWidth={1.5}/><span><Play size={9} fill="currentColor"/></span></span><div>Paper<span>in Motion</span></div></div>; }
-function EmptyFilm() { return <div className="empty-film" aria-label="视频画面示意，尚未生成"><div className="frame-topline"><span>THE IDEA, MADE CLEAR.</span><span>FIG. 01</span></div><div className="concept-art"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="paper-illustration"><div className="paper-corner"/><span>RESEARCH PAPER</span><i/><i/><i/><div className="mini-chart"><b/><b/><b/><b/><b/></div><i/><i/></div><span className="motion-spark spark-a">✳</span><span className="motion-spark spark-b">+</span><div className="play-illustration"><Play size={30} fill="currentColor" strokeWidth={1.4}/></div><div className="floating-formula">W<sub>0</sub> + <em>BA</em></div></div><div className="empty-caption"><span>FROM PAPER TO PICTURE</span><h3>好想法，值得被看懂。</h3><p>你的下一篇论文讲解视频，从这里开始。</p></div><div className="frame-bottomline"><span>画面示意 · 尚未生成</span><span>16:9</span></div></div>; }
-function SceneCard({ scene, index, expanded, toggle }: { scene: Scene; index: number; expanded: boolean; toggle: () => void }) { const extra = Object.entries(scene).filter(([k,v]) => !['id','title','narration','visual_type','bullets','source_pages','formula'].includes(k) && v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && !v.length)); return <article className={`scene-card ${expanded ? 'expanded' : ''}`}><button className="scene-toggle" onClick={toggle} aria-expanded={expanded}><span className="scene-number">{String(index + 1).padStart(2, '0')}</span><span className="scene-heading"><strong>{scene.title || `分镜 ${index + 1}`}</strong><span>{visualLabels[scene.visual_type] || scene.visual_type || '讲解画面'}<i/>{scene.source_pages?.length ? `来源 P.${scene.source_pages.join('、')}` : '未标注来源页'}</span></span><ChevronDown size={16}/></button>{expanded && <div className="scene-detail"><p>{scene.narration}</p>{scene.bullets?.length > 0 && <ul>{scene.bullets.map((b,i) => <li key={i}>{b}</li>)}</ul>}{Boolean(scene.formula) && <div className="formula-box"><span>公式 / 计算</span><pre>{printable(scene.formula)}</pre></div>}{extra.map(([key,value]) => <details key={key}><summary>{({ nodes:'流程节点',duration_frames:'分镜时长（帧）',audio_duration:'配音时长（秒）',calculation:'计算过程',calculations:'计算结果',example:'示例数据',examples:'示例数据',source:'来源详情',sources:'来源详情',data:'画面数据',duration:'分镜时长（秒）',duration_sec:'分镜时长（秒）',visual:'视觉描述',source_text:'来源原文',evidence:'依据',code:'渲染代码' } as Record<string,string>)[key] || key}</summary><pre>{printable(value)}</pre></details>)}</div>}</article>; }
+interface Evidence {
+  id: string;
+  document: string;
+  physical_page: number;
+  quote?: string;
+  text?: string;
+}
+
+interface Config {
+  model: string;
+  tts_model: string;
+  region: string;
+  endpoint_mode: 'shared' | 'workspace';
+  workspace_configured: boolean;
+  api_configured: boolean;
+  configuration_error?: string;
+  max_upload_mb: number;
+}
+
+interface Scene {
+  id: string | number;
+  title: string;
+  narration: string;
+  visual_type: string;
+  bullets: string[];
+  source_pages: number[];
+  formula?: unknown;
+  evidence?: Evidence[];
+  [key: string]: unknown;
+}
+
+interface Job {
+  id: string;
+  status: Status;
+  stage: Stage;
+  progress: number;
+  message?: string;
+  language: Language;
+  duration: number;
+  actual_duration?: number;
+  title: string;
+  error?: string;
+  is_demo: boolean;
+  demo_topic?: Topic;
+  condition?: 'A' | 'B' | 'C';
+  style?: Style;
+  parent_id?: string;
+  scenes: Scene[];
+  files: {
+    video?: string;
+    subtitles?: string;
+    project?: string;
+    storyboard?: string;
+    audio?: string;
+    evaluation?: string;
+    poster?: string;
+  };
+  warnings?: string[];
+  model: string;
+  created_at: string;
+}
+
+const stages = [
+  ['reading', 'reading'],
+  ['understanding', 'understanding'],
+  ['examples', 'examples'],
+  ['storyboard', 'storyboardStage'],
+  ['speech', 'speech'],
+  ['rendering', 'rendering'],
+] as const;
+
+const styles: Style[] = ['editorial', 'midnight', 'classroom'];
+const levels: Level[] = ['introductory', 'advanced'];
+const sourceFields = new Set(['id', 'title', 'narration', 'visual_type', 'bullets', 'source_pages', 'formula', 'evidence']);
+
+function setLocalPreference(key: string, value?: string) {
+  try {
+    if (value === undefined) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    // The studio still works when storage is disabled.
+  }
+}
+
+function initialJobId() {
+  try {
+    const requested = new URLSearchParams(window.location.search).get('job');
+    if (requested && /^[a-f0-9]{32}$/.test(requested)) return requested;
+    const saved = localStorage.getItem('pim-last-job');
+    return saved && /^[a-f0-9]{32}$/.test(saved) ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+function activeJob(job: Job | null) {
+  return job?.status === 'queued' || job?.status === 'running';
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : '';
+}
+
+async function readResponse<T>(response: Response): Promise<T> {
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error('unreadable-response');
+  }
+  if (!response.ok) {
+    const detail = body?.detail;
+    const value = typeof detail === 'string'
+      ? detail
+      : Array.isArray(detail)
+        ? detail.map(item => item?.msg).filter(Boolean).join(' · ')
+        : body?.error || body?.message;
+    throw new Error(value || `HTTP ${response.status}`);
+  }
+  return body as T;
+}
+
+function ServiceMessage({ value, lang, fallback }: { value: string; lang: Language; fallback?: string }) {
+  const t = messages[lang];
+  if (value === 'unreadable-response') return <>{t.responseError}</>;
+  const translated = translateBackendMessage(value, lang);
+  const hasDetails = translated !== value && Boolean(value) && (!translated || /\b(?:HTTP|code=|request_id=)/i.test(value));
+  return <>
+    {translated || fallback || t.requestError}
+    {hasDetails && <details className="service-details"><summary>{t.serverDetails}</summary><p lang={/[\u3400-\u9fff]/.test(value) ? "zh-CN" : "en"}>{value}</p></details>}
+  </>;
+}
+
+function OptionGroup<T extends string | number>({ label, options, value, choose, disabled, className = '' }: {
+  label: string;
+  options: { value: T; label: string }[];
+  value: T;
+  choose: (value: T) => void;
+  disabled: boolean;
+  className?: string;
+}) {
+  return (
+    <fieldset className={`control-group ${className}`} disabled={disabled}>
+      <legend>{label}</legend>
+      <div className="segments">
+        {options.map(option => (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={option.value === value}
+            onClick={() => choose(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function Modal({ title, close, closeLabel, children }: {
+  title: string; close: () => void; closeLabel: string; children: ReactNode;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    return () => element?.close();
+  }, []);
+  return (
+    <dialog
+      ref={dialog}
+      className="modal"
+      aria-labelledby="dialog-heading"
+      onCancel={event => { event.preventDefault(); close(); }}
+      onClick={event => { if (event.target === event.currentTarget) close(); }}
+    >
+      <div className="modal-body">
+        <div className="modal-heading">
+          <h2 id="dialog-heading">{title}</h2>
+          <button className="icon-button" onClick={close} aria-label={closeLabel} autoFocus><X size={20} /></button>
+        </div>
+        {children}
+      </div>
+    </dialog>
+  );
+}
+
+function EmptyPreview({ title, detail, icon }: { title: string; detail: ReactNode; icon?: ReactNode }) {
+  return (
+    <div className="empty-preview">
+      <span className="preview-icon" aria-hidden="true">{icon || <Film size={30} strokeWidth={1.5} />}</span>
+      <h3>{title}</h3>
+      <div>{detail}</div>
+    </div>
+  );
+}
+
+function displayJobTitle(job: Job, t: Messages) {
+  return job.is_demo ? (job.demo_topic === 'cliff' ? t.cliffDemo : t.loraDemo) : job.title || t.preparing;
+}
+
+function SceneCard({ scene, index, t }: { scene: Scene; index: number; t: Messages }) {
+  const fields = Object.entries(scene).filter(([key, value]) =>
+    !sourceFields.has(key) && value !== null && value !== undefined && value !== '' && !(Array.isArray(value) && !value.length));
+  return (
+    <details className="scene-card">
+      <summary>
+        <span className="scene-number">{String(index + 1).padStart(2, '0')}</span>
+        <span className="scene-heading">
+          <strong>{scene.title || `${t.scene} ${index + 1}`}</strong>
+          <span>{t.visualTypes[scene.visual_type] || scene.visual_type}
+            {' · '}
+            {scene.source_pages?.length ? `${t.sourcePages} ${scene.source_pages.join(', ')}` : t.noPages}
+          </span>
+        </span>
+        <ChevronDown size={16} />
+      </summary>
+      <div className="scene-detail">
+        <p>{scene.narration}</p>
+        {!!scene.bullets?.length && <ul>{scene.bullets.map((point, i) => <li key={i}>{point}</li>)}</ul>}
+        {Boolean(scene.formula) && <div className="formula-box"><strong>{t.formulaLabel}</strong><pre>{String(scene.formula)}</pre></div>}
+        {!!scene.evidence?.length && <details className="source-excerpts">
+          <summary>{t.evidenceLabel}</summary>
+          {scene.evidence.map((item, index) => (
+            <blockquote key={item.id || index}>
+              <cite>{item.document} · {t.physicalPage} {item.physical_page}</cite>
+              <p>{item.quote || item.text}</p>
+            </blockquote>
+          ))}
+        </details>}
+        {!!fields.length && <details><summary>{t.sceneDetails}</summary>
+          <dl>{fields.map(([key, value]) => <div key={key}>
+            <dt>{t.fields[key] || key.replaceAll('_', ' ')}</dt>
+            <dd><pre>{typeof value === 'string' ? value : JSON.stringify(value, null, 2)}</pre></dd>
+          </div>)}</dl>
+        </details>}
+      </div>
+    </details>
+  );
+}
+
+function JobSummary({ job, lang, pollError, openRevision, retryJob, retryError, busy }: {
+  job: Job;
+  lang: Language;
+  pollError: boolean;
+  openRevision: () => void;
+  retryJob: () => void;
+  retryError: string | null;
+  busy: boolean;
+}) {
+  const t = messages[lang];
+  const step = job.status === 'complete' || job.stage === 'complete'
+    ? stages.length
+    : Math.max(0, stages.findIndex(([id]) => id === job.stage));
+  const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
+  const progressMessage = activeJob(job) && job.message
+    ? translateBackendMessage(job.message, lang) || t.generationProgress
+    : t.generationProgress;
+  const links = [
+    ['subtitles', t.subtitleFile, FileText],
+    ['storyboard', t.storyboardFile, Layers3],
+    ['project', t.projectFile, FileText],
+    ['audio', t.audioFile, FileText],
+    ['evaluation', t.evaluationFile, FileText],
+  ] as const;
+  return (
+    <section className="panel job-panel">
+      <div className="job-heading">
+        <div>
+          <p className="field-label">{t.currentJob}</p>
+          <h2>{displayJobTitle(job, t)}</h2>
+        </div>
+        <span className={`status ${job.status}`}>{t[job.status]}</span>
+      </div>
+      <div className="job-meta">
+        <span><Globe2 size={14} />{job.language === 'zh' ? t.chinese : t.english}</span>
+        <span><Clock3 size={14} />{t.target} {job.duration} {t.seconds}</span>
+        {typeof job.actual_duration === 'number' && <span>{t.actual} {job.actual_duration.toFixed(0)} {t.seconds}</span>}
+      </div>
+      <div className="progress-label"><span>{progressMessage}</span><strong>{progress}%</strong></div>
+      <progress className={job.status === 'failed' ? 'failed' : ''} aria-label={t.generationProgress} value={progress} max={100} />
+      <ol className="stage-grid">
+        {stages.map(([id, label], index) => (
+          <li key={id} className={index < step ? 'done' : index === step && activeJob(job) ? 'current' : ''} aria-current={index === step && activeJob(job) ? 'step' : undefined}>
+            <span className="stage-dot" aria-hidden="true" />
+            {job.is_demo && id === 'speech' ? t.noSpeech : t[label]}
+          </li>
+        ))}
+      </ol>
+      {pollError && <p className="notice" role="status">{t.progressLost}</p>}
+      {job.is_demo && <p className="job-note">{t.demoNote}</p>}
+      {job.parent_id && <a className="source-job" href={`/?job=${encodeURIComponent(job.parent_id)}`}>{t.revisionOf} {job.parent_id.slice(0, 8)}</a>}
+      {job.warnings?.map((warning, index) => (
+        <div className="warning-row" key={index}><CircleAlert size={15} /><div><ServiceMessage value={warning} lang={lang} /></div></div>
+      ))}
+      {job.status === 'complete' && <div className="export-list">
+        {links.map(([key, label, Icon]) => job.files[key] && (
+          <a key={key} href={job.files[key]} download><Icon size={15} />{label}<ArrowDownToLine size={14} /></a>
+        ))}
+      </div>}
+      {job.status === 'complete' && !job.is_demo && (
+        <button className="secondary-button revise-button" onClick={openRevision} disabled={busy}>
+          <Settings2 size={15} />{t.revise}
+        </button>
+      )}
+      {job.status === 'failed' && (
+        <button className="secondary-button revise-button" onClick={retryJob} disabled={busy}>
+          {t.retryJob}
+        </button>
+      )}
+      {retryError !== null && <div className="notice error" role="alert"><ServiceMessage value={retryError} lang={lang} /></div>}
+    </section>
+  );
+}
+
+function RevisionForm({ job, t, submitRevision, submitting }: {
+  job: Job; t: Messages; submitRevision: (revision: Revision) => void; submitting: boolean;
+}) {
+  const [stage, setStage] = useState<RevisionStage>('storyboard');
+  const [style, setStyle] = useState<Style>(job.style || 'editorial');
+  const [notes, setNotes] = useState('');
+  const [sceneIndex, setSceneIndex] = useState('');
+  const [narration, setNarration] = useState('');
+  const [error, setError] = useState<'feedbackRequired' | 'narrationRequired' | null>(null);
+  const stageOptions: { value: RevisionStage; label: string }[] = [
+    { value: 'understanding', label: t.reviseUnderstanding },
+    ...(job.condition === 'A' || job.condition === 'B' ? [] : [{ value: 'example' as const, label: t.reviseExample }]),
+    { value: 'storyboard', label: t.reviseStoryboard },
+    { value: 'production', label: t.reviseProduction },
+  ];
+  return (
+    <form className="revision-form" onSubmit={event => {
+      event.preventDefault();
+      if (stage === 'production') {
+        if (sceneIndex && !narration.trim()) return setError('narrationRequired');
+        const changed = sceneIndex && narration.trim() !== job.scenes[Number(sceneIndex) - 1].narration.trim();
+        submitRevision({ stage, style, narrations: changed ? { [sceneIndex]: narration.trim() } : {} });
+      } else {
+        if (!notes.trim()) return setError('feedbackRequired');
+        submitRevision({ stage, notes: notes.trim() });
+      }
+    }}>
+      <label>{t.revisionStage}
+        <select value={stage} disabled={submitting} onChange={event => {
+          setStage(event.target.value as RevisionStage);
+          setError(null);
+        }}>
+          {stageOptions.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}
+        </select>
+      </label>
+      {stage === 'production' ? <>
+        <p>{t.reviseProductionHint}</p>
+        <OptionGroup label={t.style} options={styles.map(value => ({ value, label: t[value] }))}
+          value={style} choose={setStyle} disabled={submitting} />
+        <label>{t.sceneToEdit}
+          <select value={sceneIndex} disabled={submitting} onChange={event => {
+            const next = event.target.value;
+            setSceneIndex(next);
+            setNarration(next ? job.scenes[Number(next)-1].narration : '');
+            setError(null);
+          }}>
+            <option value="">{t.noNarrationEdit}</option>
+            {job.scenes.map((scene, i) => <option key={scene.id || i} value={i+1}>{i+1}. {scene.title}</option>)}
+          </select>
+        </label>
+        {sceneIndex && <label>{t.revisedNarration}
+          <textarea maxLength={2200} rows={5} disabled={submitting} value={narration}
+            onChange={event => { setNarration(event.target.value); setError(null); }} />
+        </label>}
+      </> : <label>{t.revisionNotes}
+        <textarea maxLength={2000} rows={5} disabled={submitting} value={notes} placeholder={t.revisionNotesHint}
+          onChange={event => { setNotes(event.target.value); setError(null); }} />
+      </label>}
+      {error && <p className="notice error" role="alert">{t[error]}</p>}
+      <button className="primary-button" disabled={submitting} type="submit">
+        {submitting && <LoaderCircle className="spin" size={16} />}{submitting ? t.submitting : t.submitRevision}
+      </button>
+    </form>
+  );
+}
 
 export default function App() {
-  const [config, setConfig] = useState<Config | null>(null), [configError, setConfigError] = useState(''), [configLoading, setConfigLoading] = useState(true);
-  const [file, setFile] = useState<File | null>(null), [language, setLanguage] = useState<Language>('zh'), [duration, setDuration] = useState(120);
-  const [job, setJob] = useState<Job | null>(null), [submitting, setSubmitting] = useState(false), [error, setError] = useState(''), [pollError, setPollError] = useState(''), [dragging, setDragging] = useState(false);
-  const [tab, setTab] = useState<'preview' | 'scenes'>('preview'), [expandedScene, setExpandedScene] = useState<number | null>(0), [settings, setSettings] = useState(false), [guide, setGuide] = useState(false), [videoReady, setVideoReady] = useState(false), [videoError, setVideoError] = useState(false);
-  const input = useRef<HTMLInputElement>(null), settingsEl = useRef<HTMLDivElement>(null);
-  const busy = submitting || job?.status === 'queued' || job?.status === 'running', complete = job?.status === 'complete';
-  const videoUrl = complete ? outputUrl(job?.files?.video) : undefined, scenes = job?.scenes || [];
-  const loadConfig = useCallback(async () => { setConfigLoading(true); setConfigError(''); try { setConfig(await readResponse<Config>(await fetch('/api/config'))); } catch(e) { setConfigError(e instanceof Error ? e.message : '无法连接后端'); } finally { setConfigLoading(false); } }, []);
+  const [lang, setLang] = useState<Language>(readUiLanguage);
+  const t = messages[lang];
+  const [language, setLanguage] = useState<Language>('en');
+  const [duration, setDuration] = useState(120);
+  const [style, setStyle] = useState<Style>('editorial');
+  const [level, setLevel] = useState<Level>('introductory');
+  const [file, setFile] = useState<File | null>(null);
+  const [supplements, setSupplements] = useState<File[]>([]);
+  const [config, setConfig] = useState<Config | null>(null);
+  const [configError, setConfigError] = useState(false);
+  const [configLoading, setConfigLoading] = useState(true);
+  const [job, setJob] = useState<Job | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [uploadError, setUploadError] = useState<UploadError | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [pollError, setPollError] = useState(false);
+  const [lastJobError, setLastJobError] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [tab, setTab] = useState<'preview' | 'storyboard'>('preview');
+  const [modal, setModal] = useState<'settings' | 'guide' | 'history' | 'revision' | null>(null);
+  const [revisionError, setRevisionError] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const [history, setHistory] = useState<Job[] | null>(null);
+  const [historyError, setHistoryError] = useState(false);
+  const [mediaError, setMediaError] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const supplementInput = useRef<HTMLInputElement>(null);
+  const jobId = job?.id;
+  const jobRunning = activeJob(job);
+  const busy = submitting || jobRunning;
+  const videoUrl = job?.status === 'complete' ? job.files.video : undefined;
+  const maxUpload = config?.max_upload_mb || 25;
+
+  useEffect(() => {
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+    document.title = `Paper in Motion · ${t.workspace}`;
+    setLocalPreference('pim-ui-language', lang);
+  }, [lang, t.workspace]);
+
+  const loadConfig = useCallback(async () => {
+    setConfigLoading(true);
+    setConfigError(false);
+    try {
+      setConfig(await readResponse<Config>(await fetch('/api/config')));
+    } catch {
+      setConfigError(true);
+    } finally {
+      setConfigLoading(false);
+    }
+  }, []);
+
   useEffect(() => { void loadConfig(); }, [loadConfig]);
-  useEffect(() => { let cancelled = false; let saved: string | null = null; try { saved = localStorage.getItem('pim-last-job'); } catch { /* Storage may be disabled. */ } if(saved && /^[a-f0-9]{32}$/.test(saved)) fetch(`/api/jobs/${saved}`).then(readResponse<Job>).then(result => { if(!cancelled) setJob(result); }).catch(() => { if(!cancelled) setPollError('上次任务暂时无法恢复，可稍后刷新或新建视频。'); }); return () => { cancelled = true; }; }, []);
-  useEffect(() => { if(job?.id) { try { localStorage.setItem('pim-last-job',job.id); } catch { /* Keep the current session usable. */ } } }, [job?.id]);
-  useEffect(() => { if (!job || !['queued','running'].includes(job.status)) return; let cancelled = false; let timer: ReturnType<typeof setTimeout>; const poll = async () => { try { const result = await readResponse<Job>(await fetch(`/api/jobs/${encodeURIComponent(job.id)}`)); if(cancelled) return; setJob(result); setPollError(''); if(['queued','running'].includes(result.status)) timer = setTimeout(poll,1500); } catch(e) { if(cancelled) return; setPollError(e instanceof Error ? e.message : '无法更新进度'); timer = setTimeout(poll,4000); } }; timer = setTimeout(poll,500); return () => { cancelled = true; clearTimeout(timer); }; }, [job?.id,job?.status]);
-  useEffect(() => { setVideoReady(false); setVideoError(false); if(!videoUrl) return; const c = new AbortController(); fetch(videoUrl,{ method:'HEAD', signal:c.signal }).then(r => r.ok ? setVideoReady(true) : setVideoError(true)).catch(e => { if(e.name !== 'AbortError') setVideoError(true); }); return () => c.abort(); }, [videoUrl]);
-  useEffect(() => { if(!settings) return; const close = (e:MouseEvent) => { if(!settingsEl.current?.contains(e.target as Node)) setSettings(false); }; document.addEventListener('mousedown',close); return () => document.removeEventListener('mousedown',close); }, [settings]);
-  function chooseFile(candidate?:File) { if(!candidate || busy) return; setError(''); if(!candidate.name.toLowerCase().endsWith('.pdf')) { setError('请选择 PDF 格式的论文。'); return; } if(!candidate.size) { setError('这是一个空文件，请重新选择。'); return; } if(candidate.size > (config?.max_upload_mb || 25)*1024*1024) { setError(`请上传不超过 ${config?.max_upload_mb || 25} MB 的 PDF。`); return; } setFile(candidate); }
-  async function createJob(demo=false) { if(busy || (!demo && !file)) return; setSubmitting(true); setError(''); setPollError(''); try { let response:Response; if(demo) response = await fetch(`/api/demo?language=${language}`,{method:'POST'}); else { const data = new FormData(); data.append('file',file!); data.append('language',language); data.append('duration',String(duration)); response = await fetch('/api/jobs',{method:'POST',body:data}); } setJob(await readResponse<Job>(response)); setTab('preview'); setExpandedScene(0); } catch(e) { setError(e instanceof Error ? e.message : '创建任务失败'); } finally { setSubmitting(false); } }
-  function reset() { if(busy) return; try { localStorage.removeItem('pim-last-job'); } catch { /* Storage may be disabled. */ } setJob(null); setFile(null); setError(''); setPollError(''); setTab('preview'); }
-  const stageIndex = complete || job?.stage === 'complete' ? stages.length : Math.max(0,stages.findIndex(s=>s.id === job?.stage));
-  const progress = Math.max(0,Math.min(100,Number(job?.progress)||0));
-  return <div className="app-shell"><aside className="sidebar"><Brand/><div className="sidebar-divider"/><p className="nav-caption">WORKSPACE</p><button className="nav-item active" onClick={() => window.scrollTo({top:0,behavior:'smooth'})}><Clapperboard size={18}/><span>视频工作台</span><i/></button><button className="nav-item" onClick={() => setGuide(true)}><BookOpen size={18}/><span>使用指南</span><ArrowUpRight size={14}/></button><div className="sidebar-note"><Sparkles size={19}/><h3>从阅读，到理解。</h3><p>让研究的核心想法<br/>跨过文字，成为画面。</p><i/></div><div className="sidebar-bottom"><span><i/>本地工作空间</span><small>PAPER IN MOTION · V0.1</small></div></aside><div className="main-shell"><header className="topbar"><div className="breadcrumb"><span>工作空间</span><ChevronRight size={13}/><strong>视频工作台</strong></div><div className="topbar-right"><span className="private-tag"><ShieldCheck size={14}/>文件保存在本机</span><div className="settings-wrap" ref={settingsEl}><button className="settings-button" onClick={() => setSettings(!settings)} aria-expanded={settings}><Settings2 size={16}/>模型配置</button>{settings && <div className="settings-popover"><div className="popover-heading"><strong>模型与服务</strong><button onClick={()=>setSettings(false)} aria-label="关闭配置"><X size={16}/></button></div><dl><dt>论文理解 / 分镜</dt><dd>{config?.model || '尚未连接'}</dd><dt>语音合成</dt><dd>{config?.tts_model || '尚未连接'}</dd><dt>模型平台 / 地域</dt><dd>阿里云百炼 · {config?.region || 'cn-beijing'}（北京）</dd><dt>调用接口</dt><dd>{config?.endpoint_label || '北京通用接口'}</dd><dt>业务空间</dt><dd>{config?.endpoint_mode === 'workspace' ? config?.workspace_configured ? '已填写业务空间 ID · 调用待验证' : '尚未填写业务空间 ID' : '使用 API Key 所属业务空间'}</dd><dt>API 配置</dt><dd>{configLoading ? '正在读取…' : configError ? '后端连接失败' : config?.api_configured ? '配置已填写 · 尚未验证调用' : '配置尚未完成'}</dd></dl><p>在后端 <code>.env</code> 填写北京地域的 <code>DASHSCOPE_API_KEY</code>。{config?.endpoint_mode === 'workspace' ? <>专属接口还需填写正确的 <code>BAILIAN_WORKSPACE_ID</code>。</> : '通用接口按 API Key 所属业务空间调用。'}论文内容会发送到阿里云百炼；填写状态不代表调用成功。</p><button className="text-button" onClick={()=>void loadConfig()} disabled={configLoading}>{configLoading ? '读取中…' : '重新读取配置'}<ArrowRight size={13}/></button></div>}</div></div></header><main className="workspace-main"><section className="page-heading"><div><div className="eyebrow"><i/>IDEAS DESERVE TO BE SEEN</div><h1>让论文<span>动起来</span><em>.</em></h1><p>从一篇论文，到一段清晰、直观的讲解视频。</p></div><button className="secondary-button" onClick={reset} disabled={busy}><Plus size={15}/>新建视频</button></section><div className="workspace-grid"><section className="creation-panel"><div className="panel-heading"><FileText size={17}/><h2>创建你的讲解视频</h2><span>01 — 03</span></div><div className="creation-content"><div className="field-heading"><label htmlFor="paper-upload"><span>01</span>上传研究论文</label><small>PDF</small></div><input ref={input} className="sr-only" id="paper-upload" type="file" accept=".pdf,application/pdf" disabled={busy} onChange={e=>{chooseFile(e.target.files?.[0]);e.target.value='';}}/><button className={`upload-zone ${dragging ? 'dragging':''}`} onClick={()=>input.current?.click()} onDragOver={e=>{e.preventDefault();if(!busy)setDragging(true);}} onDragLeave={()=>setDragging(false)} onDrop={e=>{e.preventDefault();setDragging(false);chooseFile(e.dataTransfer.files[0]);}} disabled={busy}>{file ? <><span className="upload-symbol"><FileCheck2 size={24}/></span><strong>{file.name}</strong><span>{(file.size/1024/1024).toFixed(2)} MB · 点击更换论文</span><small className="file-ready"><CircleCheck size={12}/>已选择</small></> : <><span className="upload-symbol"><Upload size={24} strokeWidth={1.5}/></span><strong>将论文拖到这里</strong><span>或 <em>点击选择文件</em></span><small>支持 PDF · 最大 {config?.max_upload_mb || 25} MB</small></>}</button><div className="field-heading spaced"><label><span>02</span>选择讲解语言</label></div><div className="language-options" role="group" aria-label="讲解语言">{(['zh','en'] as Language[]).map(l=><button key={l} disabled={busy} className={language===l?'chosen':''} onClick={()=>setLanguage(l)} aria-pressed={language===l}><span className="language-glyph">{l==='zh'?'中':'En'}</span><span><strong>{l==='zh'?'中文':'英文'}</strong><small>{l==='zh'?'Chinese':'English'}</small></span><i>{language===l && <Check size={10} strokeWidth={3}/>}</i></button>)}</div><div className="field-heading spaced"><label><span>03</span>选择视频时长</label><small>目标时长</small></div><div className="duration-options" role="group" aria-label="目标时长">{durations.map(d=><button key={d.value} className={duration===d.value?'chosen':''} onClick={()=>setDuration(d.value)} disabled={busy} aria-pressed={duration===d.value}>{d.value===120 && <em>推荐</em>}<strong>{d.label}</strong><span>{d.desc}</span></button>)}</div>{configError ? <div className="config-notice error"><CircleAlert size={14}/><p>后端尚未连接。<button onClick={()=>void loadConfig()}>重新检查</button></p></div> : !configLoading && !config?.api_configured ? <div className="config-notice"><CircleAlert size={14}/><p>{config?.configuration_error || '百炼 API 配置尚未完成。请在后端 .env 填写北京地域的 API Key。'} 可先体验示例。</p></div> : <div className="connection-note"><i/>{configLoading ? '正在读取模型配置…' : `${shortModel(config?.model)} · 百炼配置已填写，调用待验证`}</div>}{error && <div className="form-error" role="alert"><CircleAlert size={14}/><span>{error}</span><button onClick={()=>setError('')} aria-label="关闭错误"><X size={13}/></button></div>}<button className="generate-button" onClick={()=>void createJob()} disabled={busy||!file||!config?.api_configured||Boolean(configError)}>{busy ? <LoaderCircle size={18} className="spin"/> : <WandSparkles size={18}/>}<span>{submitting?'正在提交…':busy?'视频正在生成':'生成讲解视频'}</span>{!busy && <ArrowRight size={17}/>}</button><p className="generation-footnote"><Clock3 size={11}/>生成时间取决于论文长度与模型响应速度</p></div><div className="demo-strip"><span><FlaskConical size={19}/></span><div><strong>先看看它是怎么工作的</strong><small>LoRA: Low-Rank Adaptation</small></div><button onClick={()=>void createJob(true)} disabled={busy||Boolean(configError)||configLoading} aria-label="体验 LoRA 示例"><ArrowUpRight size={19}/></button></div></section><section className="result-column"><div className="preview-panel"><div className="preview-header"><div className="preview-tabs" role="tablist" aria-label="生成结果"><button role="tab" aria-selected={tab==='preview'} className={tab==='preview'?'active':''} onClick={()=>setTab('preview')}><Film size={15}/>视频预览</button><button role="tab" aria-selected={tab==='scenes'} className={tab==='scenes'?'active':''} onClick={()=>setTab('scenes')}><Layers3 size={15}/>分镜与来源{scenes.length>0 && <span>{scenes.length}</span>}</button></div><span className="output-type">MP4 · 16:9</span></div>{tab==='preview' ? <div className="preview-body">{videoUrl && videoReady && !videoError ? <video key={videoUrl} className="result-video" src={videoUrl} controls playsInline preload="metadata" onError={()=>setVideoError(true)} aria-label="论文讲解视频"/> : job?.status==='failed' ? <div className="failed-preview"><CircleAlert size={32}/><h3>这次生成未能完成</h3><p>{job.error||job.message||'请检查模型配置后重试。'}</p></div> : videoError ? <div className="failed-preview"><Film size={32}/><h3>视频文件暂时不可用</h3><p>服务返回了视频路径，但文件无法读取。请检查任务输出。</p></div> : complete && !videoUrl ? <div className="failed-preview"><FileText size={32}/><h3>任务完成，尚无视频文件</h3><p>请查看分镜内容与任务提示。</p></div> : <EmptyFilm/>}{busy && job && <div className="preview-running-badge"><LoaderCircle size={13} className="spin"/>{job.is_demo?'正在渲染示例':'生成进行中'}<span>完成后可在此预览</span></div>}</div> : <div className="scenes-panel">{scenes.length ? <><div className="scenes-intro"><FileCheck2 size={17}/><p>每一幕，回到论文找到依据。<span>展开查看旁白、来源页码与计算内容。</span></p></div><div className="scene-list">{scenes.map((s,i)=><SceneCard scene={s} index={i} expanded={expandedScene===i} toggle={()=>setExpandedScene(expandedScene===i?null:i)} key={`${s.id}-${i}`}/>)}</div></> : <div className="scenes-empty"><Layers3 size={32} strokeWidth={1.3}/><h3>每一个想法，都有来处。</h3><p>生成后，这里会展示分镜、讲解旁白、<br/>论文来源页码与示例的计算过程。</p></div>}</div>}<div className="preview-footer"><span><i/>{complete&&videoReady?'视频已生成':busy?'等待生成完成':job?.status==='failed'?'生成失败':'等待你的第一篇论文'}</span>{videoUrl&&videoReady ? <a href={videoUrl} download className="download-button"><ArrowDownToLine size={14}/>下载视频</a> : <span className="preview-footer-hint">理解 · 解释 · 可视化</span>}</div></div>{job ? <section className="job-panel"><div className="job-heading"><div><div className="job-kicker">{job.is_demo?<><FlaskConical size={12}/>示例体验 · 预制分镜 / 无 API / 无配音</>:<><Sparkles size={12}/>本次生成任务</>}</div><h2>{job.title||'正在准备论文讲解'}</h2></div><span className={`job-state ${job.status}`}>{complete?<CircleCheck size={13}/>:job.status==='failed'?<CircleAlert size={13}/>:<LoaderCircle size={13} className="spin"/>}{({queued:'排队中',running:'处理中',complete:'已完成',failed:'未完成'})[job.status]}</span></div>{job.is_demo && <div className="demo-notice">演示使用预制 LoRA 分镜，后端实际渲染视频，不调用大模型、不生成配音。</div>}<div className="job-meta"><span><Globe2 size={12}/>{job.language==='en'?'English':'中文讲解'}</span><span><Clock3 size={12}/>目标 {job.duration} 秒</span><span><Settings2 size={12}/>{shortModel(job.model)}</span></div><div className="progress-title"><span>{job.message||'等待后端更新'}</span><strong>{progress}%</strong></div><div className="progress-track" role="progressbar" aria-label="后端任务进度" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}><span style={{width:`${progress}%`}} className={job.status==='failed'?'failed':''}/></div><div className="stage-grid">{stages.map((s,i)=><div key={s.id} className={`stage-item ${i<stageIndex?'done':i===stageIndex&&busy?'current':''}`}><i>{i<stageIndex?<Check size={10} strokeWidth={3}/>:<span/>}</i>{job.is_demo&&s.id==='speech'?'跳过配音':s.title}</div>)}</div>{pollError && <div className="warning-row"><CircleAlert size={14}/><p>进度连接暂时中断，正在重试。{pollError}</p></div>}{job.error && <div className="warning-row error" role="alert"><CircleAlert size={14}/><p>{job.error}</p></div>}{job.warnings?.map((w,i)=><div className="warning-row" key={i}><CircleAlert size={14}/><p>{w}</p></div>)}{complete && <div className="additional-downloads">{job.files?.subtitles&&<a href={outputUrl(job.files.subtitles)} download><FileText size={13}/>字幕<ArrowDownToLine size={12}/></a>}{job.files?.storyboard&&<a href={outputUrl(job.files.storyboard)} download><Layers3 size={13}/>分镜 JSON<ArrowDownToLine size={12}/></a>}{job.files?.project&&<a href={outputUrl(job.files.project)} download><FileCode2 size={13}/>项目文件<ArrowDownToLine size={12}/></a>}</div>}</section> : <div className="how-it-works"><div className="how-heading"><span>一篇论文，三步变得清晰</span><i/></div><div className="how-steps"><div><span><BookOpen size={19}/></span><strong>读懂研究</strong><p>提取问题、方法与贡献</p></div><ChevronRight size={13}/><div><span className="orange"><Layers3 size={19}/></span><strong>把概念讲清</strong><p>构造示例，编排讲解分镜</p></div><ChevronRight size={13}/><div><span><AudioLines size={19}/></span><strong>让画面开口</strong><p>合成动画、旁白与字幕</p></div></div></div>}</section></div><footer className="workspace-footer"><span><i>P</i>把理解交给画面，把时间留给发现。</span><button onClick={()=>setGuide(true)}><CircleHelp size={13}/>关于生成与来源</button></footer></main></div>{guide && <div className="modal-backdrop" onClick={e=>{if(e.target===e.currentTarget)setGuide(false);}}><section className="guide-modal" role="dialog" aria-modal="true" aria-labelledby="guide-title"><div className="modal-top"><span><BookOpen size={22}/></span><button onClick={()=>setGuide(false)} aria-label="关闭指南"><X size={20}/></button></div><div className="eyebrow">A LITTLE GUIDE</div><h2 id="guide-title">把复杂的想法，讲明白。</h2><p>Paper in Motion 会把论文转换成有来源、有示例的讲解分镜，再生成视频。</p><ol><li><span>01</span><div><strong>上传 PDF，选择讲解方式</strong><p>选择中文或英文与目标时长。在后端 .env 配置阿里云百炼北京地域的 API Key。默认使用北京通用接口，业务空间由 API Key 归属决定；论文内容会发送到百炼模型服务。</p></div></li><li><span>02</span><div><strong>跟随实际生成进度</strong><p>工作台展示后端报告的阶段和进度。百炼配置已填写不代表调用已验证；如有错误，可查看任务提示和本机日志。</p></div></li><li><span>03</span><div><strong>预览视频，核查分镜与来源</strong><p>在「分镜与来源」检查旁白、页码与计算内容。模型可能理解有误，使用前请对照论文核查。</p></div></li></ol><div className="guide-demo-note"><FlaskConical size={17}/><p>示例使用预制 LoRA 分镜，视频由后端实际渲染。不调用大模型、不生成配音，适合先了解完整界面与视频形式。</p></div><button className="generate-button" onClick={()=>setGuide(false)}>开始探索<ArrowRight size={17}/></button></section></div>}</div>;
+
+  useEffect(() => {
+    const id = initialJobId();
+    if (!id) return;
+    const controller = new AbortController();
+    fetch(`/api/jobs/${id}`, { signal: controller.signal })
+      .then(readResponse<Job>)
+      .then(result => { if (!controller.signal.aborted) setJob(current => current ?? result); })
+      .catch(() => { if (!controller.signal.aborted) setLastJobError(true); });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    if (jobId) setLocalPreference('pim-last-job', jobId);
+  }, [jobId]);
+
+  useEffect(() => {
+    if (!jobId || !jobRunning) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      try {
+        const result = await readResponse<Job>(await fetch(`/api/jobs/${encodeURIComponent(jobId!)}`, { signal: controller.signal }));
+        if (controller.signal.aborted) return;
+        setJob(result);
+        setPollError(false);
+        if (activeJob(result)) timer = setTimeout(poll, 1500);
+      } catch {
+        if (controller.signal.aborted) return;
+        setPollError(true);
+        timer = setTimeout(poll, 4000);
+      }
+    }
+    timer = setTimeout(poll, 500);
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [jobId, jobRunning]);
+
+  useEffect(() => { setMediaError(false); }, [videoUrl]);
+
+  const loadHistory = useCallback(async (signal: AbortSignal) => {
+    setHistory(null);
+    setHistoryError(false);
+    try {
+      const jobs = await readResponse<Job[]>(await fetch('/api/jobs', { signal }));
+      if (!signal.aborted) setHistory(jobs);
+    } catch {
+      if (!signal.aborted) setHistoryError(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (modal !== 'history') return;
+    const controller = new AbortController();
+    void loadHistory(controller.signal);
+    return () => controller.abort();
+  }, [modal, loadHistory]);
+
+  function validateFile(candidate: File): UploadError | null {
+    if (!candidate.name.toLowerCase().endsWith('.pdf')) return 'invalidPdf';
+    if (!candidate.size) return 'emptyPdf';
+    if (candidate.size > maxUpload * 1024 * 1024) return 'sizeError';
+    return null;
+  }
+
+  function validateTotal(primary: File | null, extras: File[]): UploadError | null {
+    const total = extras.reduce((bytes, item) => bytes + item.size, primary?.size || 0);
+    return total > 50 * 1024 * 1024 ? 'totalSizeError' : null;
+  }
+
+  function selectSupplements(chosen: File[]) {
+    if (!chosen.length || busy) return;
+    setRequestError(null);
+    const next = [...supplements, ...chosen];
+    const error = next.length > 3 ? 'supplementCountError'
+      : chosen.map(validateFile).find(Boolean) || validateTotal(file, next);
+    setUploadError(error);
+    if (!error) setSupplements(next);
+  }
+
+  function selectFile(candidate?: File) {
+    if (!candidate || busy) return;
+    setRequestError(null);
+    const error = validateFile(candidate) || validateTotal(candidate, supplements);
+    setUploadError(error);
+    if (!error) setFile(candidate);
+  }
+
+  function showJob(next: Job) {
+    setJob(next);
+    setTab('preview');
+    setPollError(false);
+    setLastJobError(false);
+    setRetryError(null);
+    window.history.replaceState(null, '', window.location.pathname);
+  }
+
+  async function submit(demo?: Topic) {
+    if (busy || (!demo && (!file || uploadError || !config?.api_configured))) return;
+    setSubmitting(true);
+    setRequestError(null);
+    try {
+      if (demo) {
+        const query = new URLSearchParams({ language, style, topic: demo });
+        showJob(await readResponse<Job>(await fetch(`/api/demo?${query}`, { method: 'POST' })));
+      } else {
+        const data = new FormData();
+        data.set('file', file!);
+        data.set('language', language);
+        data.set('duration', String(duration));
+        data.set('style', style);
+        data.set('level', level);
+        supplements.forEach(item => data.append('supplements', item));
+        showJob(await readResponse<Job>(await fetch('/api/jobs', { method: 'POST', body: data })));
+      }
+    } catch (error) {
+      setRequestError(errorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function submitRevision(revision: Revision) {
+    if (busy || !jobId) return;
+    setSubmitting(true);
+    setRevisionError(null);
+    try {
+      const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/revise`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(revision),
+      });
+      showJob(await readResponse<Job>(response));
+      setModal(null);
+    } catch (error) {
+      setRevisionError(errorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function retryJob() {
+    if (busy || job?.status !== 'failed') return;
+    setSubmitting(true);
+    setRetryError(null);
+    try {
+      const response = await fetch(`/api/jobs/${encodeURIComponent(job.id)}/retry`, { method: 'POST' });
+      showJob(await readResponse<Job>(response));
+    } catch (error) {
+      setRetryError(errorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function reset() {
+    if (busy) return;
+    setLocalPreference('pim-last-job');
+    window.history.replaceState(null, '', window.location.pathname);
+    setJob(null);
+    setFile(null);
+    setSupplements([]);
+    setTab('preview');
+    setUploadError(null);
+    setRequestError(null);
+    setPollError(false);
+    setLastJobError(false);
+    setRetryError(null);
+  }
+
+  function closeModal() { setModal(null); }
+
+  const locale = lang === 'zh' ? 'zh-CN' : 'en';
+  const dateDisplay = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
+
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="topbar-content">
+          <a href="/" className="brand" aria-label={`Paper in Motion · ${t.workspace}`}>
+            <span className="brand-mark"><Clapperboard size={23} strokeWidth={1.8} /></span>
+            <strong>Paper in Motion</strong>
+          </a>
+          <nav className="topbar-actions" aria-label={t.workspace}>
+            <button className="topbar-button" onClick={() => setModal('history')} aria-label={t.history}><History size={17} /><span>{t.history}</span></button>
+            <button className="topbar-button" onClick={() => setModal('settings')} aria-label={t.settings}><Settings2 size={17} /><span>{t.settings}</span></button>
+            <label className="language-picker">
+              <Globe2 size={16} aria-hidden="true" />
+              <span className="sr-only">{t.interfaceLanguage}</span>
+              <select value={lang} onChange={event => setLang(event.target.value as Language)}>
+                <option value="en" lang="en">English</option>
+                <option value="zh" lang="zh-CN">中文</option>
+              </select>
+            </label>
+          </nav>
+        </div>
+      </header>
+      <main className="workspace">
+        <div className="page-heading">
+          <div><h1>{t.headline}</h1><p>{t.intro}</p></div>
+          <button className="secondary-button" onClick={reset} disabled={busy}><Plus size={17} />{t.newVideo}</button>
+        </div>
+        <div className="workspace-grid">
+          <section className="panel creation-panel" aria-labelledby="create-title">
+            <div className="panel-heading"><h2 id="create-title">{t.create}</h2><FileText size={19} /></div>
+            <form onSubmit={event => { event.preventDefault(); void submit(); }}>
+              <div className="creation-content">
+                <div className="field-label" id="paper-label">{t.paper}</div>
+                <input
+                  ref={input}
+                  id="paper-upload"
+                  className="sr-only"
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  tabIndex={-1}
+                  aria-labelledby="paper-label"
+                  disabled={busy}
+                  onChange={event => { selectFile(event.target.files?.[0]); event.target.value = ''; }}
+                />
+                <button
+                  type="button"
+                  className={`upload-zone ${dragging ? 'dragging' : ''}`}
+                  onClick={() => input.current?.click()}
+                  onDragOver={event => { event.preventDefault(); if (!busy) setDragging(true); }}
+                  onDragLeave={() => setDragging(false)}
+                  onDrop={event => { event.preventDefault(); setDragging(false); selectFile(event.dataTransfer.files[0]); }}
+                  disabled={busy}
+                >
+                  <span className="upload-icon">{file ? <CircleCheck size={23} /> : <Upload size={23} />}</span>
+                  <strong>{file?.name || t.drop}</strong>
+                  <span>{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB · ${t.replace}` : t.browse}</span>
+                  {!file && <small>{t.uploadLimit} {maxUpload} MB</small>}
+                </button>
+                <details className="supplement-control">
+                  <summary>{t.supplements}{supplements.length > 0 && ` (${supplements.length})`}</summary>
+                  <p>{t.supplementLimit}</p>
+                  <ul>{supplements.map((item, index) => (
+                    <li key={`${item.name}-${index}`}>{item.name}
+                      <button type="button" className="icon-button" disabled={busy} aria-label={`${t.remove} ${item.name}`}
+                        onClick={() => { setSupplements(items => items.filter((_, i) => i !== index)); setUploadError(null); }}>
+                        <X size={15} />
+                      </button>
+                    </li>
+                  ))}</ul>
+                  <input ref={supplementInput} className="sr-only" tabIndex={-1} type="file" multiple
+                    aria-label={t.supplements} accept=".pdf,application/pdf" disabled={busy}
+                    onChange={event => { selectSupplements(Array.from(event.target.files || [])); event.target.value = ''; }} />
+                  <button type="button" className="text-button" disabled={busy || supplements.length >= 3} onClick={() => supplementInput.current?.click()}>
+                    <Plus size={15} />{t.addSupplement}
+                  </button>
+                </details>
+                <OptionGroup label={t.videoLanguage} options={[
+                  { value: 'en', label: t.english }, { value: 'zh', label: t.chinese },
+                ]} value={language} choose={setLanguage} disabled={busy} />
+                <OptionGroup label={t.duration} options={[1, 2, 3].map(minutes => ({
+                  value: minutes * 60, label: `${minutes} ${t.minute}`,
+                }))} value={duration} choose={setDuration} disabled={busy} />
+                <OptionGroup className="style-group" label={t.style} options={styles.map(value => ({
+                  value, label: t[value],
+                }))} value={style} choose={setStyle} disabled={busy} />
+                <OptionGroup label={t.level} options={levels.map(value => ({
+                  value, label: t[value],
+                }))} value={level} choose={setLevel} disabled={busy} />
+                {configError && <div className="notice"><CircleAlert size={16} /><div>{t.apiUnavailable} <button type="button" onClick={() => void loadConfig()}>{t.retry}</button></div></div>}
+                {!configLoading && !configError && !config?.api_configured && (
+                  <div className="notice"><CircleAlert size={16} /><div><ServiceMessage value={config?.configuration_error || ''} lang={lang} fallback={t.apiMissing} /></div></div>
+                )}
+                {uploadError && <div className="notice error" role="alert">
+                  <CircleAlert size={16} />{t[uploadError]}{uploadError === 'sizeError' && ` ${maxUpload} MB.`}
+                </div>}
+                {requestError !== null && <div className="notice error" role="alert"><CircleAlert size={16} /><div><ServiceMessage value={requestError} lang={lang} /></div></div>}
+                <button className="primary-button" type="submit" disabled={busy || !file || !!uploadError || !config?.api_configured || configError || configLoading}>
+                  {busy ? <LoaderCircle size={18} className="spin" /> : <Film size={18} />}
+                  {submitting ? t.submitting : jobRunning ? t.generating : t.generate}
+                  {!busy && <ArrowRight size={17} />}
+                </button>
+              </div>
+            </form>
+            <div className="demo-section">
+              <span className="field-label">{t.demo}</span>
+              <div>{(['lora', 'cliff'] as const).map(topic => (
+                <button key={topic} className="demo-button" onClick={() => void submit(topic)} disabled={busy || configError || configLoading}>
+                  <Play size={13} fill="currentColor" />
+                  {topic === 'lora' ? t.loraDemo : t.cliffDemo}
+                  <ArrowUpRight size={14} />
+                </button>
+              ))}</div>
+            </div>
+          </section>
+          <div className="results">
+            <section className="panel preview-panel">
+              <div className="preview-heading">
+                <div className="preview-tabs" aria-label={t.preview}>
+                  <button aria-pressed={tab === 'preview'} onClick={() => setTab('preview')}><Film size={17} />{t.preview}</button>
+                  <button aria-pressed={tab === 'storyboard'} onClick={() => setTab('storyboard')}><Layers3 size={17} />{t.storyboard}{!!job?.scenes?.length && <span>{job.scenes.length}</span>}</button>
+                </div>
+                {videoUrl && !mediaError && <a className="download-link" href={videoUrl} download><ArrowDownToLine size={16} />{t.download}</a>}
+              </div>
+              {tab === 'preview'
+                ? <div className="preview-surface" aria-live="polite">
+                    {videoUrl && !mediaError
+                      ? <video key={videoUrl} src={videoUrl} poster={job?.files.poster} controls playsInline preload="metadata"
+                          aria-label={t.videoLabel} onError={() => setMediaError(true)} />
+                      : job?.status === 'failed'
+                        ? <EmptyPreview title={t.jobFailed} detail={<ServiceMessage value={job.error || job.message || ''} lang={lang} />} icon={<CircleAlert size={30} />} />
+                        : mediaError
+                          ? <EmptyPreview title={t.mediaError} detail={t.mediaErrorText} icon={<CircleAlert size={30} />} />
+                          : job?.status === 'complete'
+                            ? <EmptyPreview title={t.jobNoVideo} detail={<button className="text-button" onClick={() => setTab('storyboard')}>{t.openStoryboard}</button>} />
+                            : busy
+                              ? <EmptyPreview title={t.generating} detail={job ? `${job.progress}%` : t.submitting} icon={<LoaderCircle size={30} className="spin" />} />
+                              : <EmptyPreview title={t.emptyTitle} detail={t.emptyText} />}
+                  </div>
+                : <div className="storyboard-panel">
+                    {job?.scenes?.length ? <>
+                      <p>{t.scenesText}</p>
+                      <div className="scene-list">{job.scenes.map((scene, index) => <SceneCard key={scene.id || index} scene={scene} index={index} t={t} />)}</div>
+                    </> : <EmptyPreview title={t.emptyScenes} detail={t.emptyScenesText} icon={<Layers3 size={30} />} />}
+                  </div>}
+            </section>
+            {lastJobError && <p role="alert" className="notice">{t.lastJobLost}</p>}
+            {job && <JobSummary key={job.id} job={job} lang={lang} pollError={pollError} busy={busy}
+              retryJob={() => void retryJob()} retryError={retryError}
+              openRevision={() => { setRevisionError(null); setModal('revision'); }} />}
+          </div>
+        </div>
+        <footer className="workspace-footer">
+          <span>{t.local}</span>
+          <button className="text-button" onClick={() => setModal('guide')}><BookOpen size={16} />{t.guide}</button>
+        </footer>
+      </main>
+      {modal === 'settings' && <Modal title={t.settings} close={closeModal} closeLabel={t.close}>
+        <dl className="settings-list">
+          <div><dt>{t.paperModel}</dt><dd>{config?.model || t.notConnected}</dd></div>
+          <div><dt>{t.speechModel}</dt><dd>{config?.tts_model || t.notConnected}</dd></div>
+          <div><dt>{t.apiRegion}</dt><dd>{t.provider} · {config?.region || 'cn-beijing'}</dd></div>
+          <div><dt>{t.endpoint}</dt><dd>{config?.endpoint_mode === 'workspace' ? t.dedicated : t.shared}</dd></div>
+          <div><dt>{t.businessSpace}</dt><dd>{config?.endpoint_mode === 'workspace'
+            ? (config.workspace_configured ? t.spaceSet : t.spaceMissing) : t.spaceKey}</dd></div>
+          <div><dt>{t.status}</dt><dd>{configLoading ? t.checking : configError ? t.apiUnavailable
+            : config?.api_configured ? t.apiReady : t.apiMissing}</dd></div>
+        </dl>
+        <p>{t.settingsIntro}</p>
+        {config?.endpoint_mode === 'workspace' && <p>{t.dedicatedHelp}</p>}
+        <button className="secondary-button" onClick={() => void loadConfig()} disabled={configLoading} aria-live="polite">{configLoading ? t.loading : t.refresh}</button>
+      </Modal>}
+      {modal === 'guide' && <Modal title={t.guide} close={closeModal} closeLabel={t.close}>
+        <p>{t.guideIntro}</p>
+        <ul className="guide-list">
+          <li><strong>{t.guideUpload}</strong><p>{t.guideUploadText}</p></li>
+          <li><strong>{t.guideReview}</strong><p>{t.guideReviewText}</p></li>
+          <li><strong>{t.guideExport}</strong><p>{t.guideExportText}</p></li>
+        </ul>
+        <p className="job-note">{t.guidePrivacy}</p>
+      </Modal>}
+      {modal === 'revision' && job && <Modal title={t.revise} close={closeModal} closeLabel={t.close}>
+        <RevisionForm job={job} t={t} submitting={submitting} submitRevision={revision => void submitRevision(revision)} />
+        {revisionError !== null && <div className="notice error" role="alert"><ServiceMessage value={revisionError} lang={lang} /></div>}
+      </Modal>}
+      {modal === 'history' && <Modal title={t.history} close={closeModal} closeLabel={t.close}>
+        {historyError ? <p role="alert">{t.historyError}</p>
+          : !history ? <p role="status">{t.loading}</p>
+          : history.length === 0 ? <p>{t.noHistory}</p>
+          : <ul className="history-list">
+              {history.map(previous => {
+                const date = new Date(previous.created_at);
+                return (
+                  <li key={previous.id}>
+                    <button
+                      disabled={busy && jobId !== previous.id}
+                      onClick={() => { showJob(previous); closeModal(); }}
+                    >
+                      <span>
+                        <strong>{displayJobTitle(previous, t)}</strong>
+                        <small>{Number.isFinite(date.getTime()) ? dateDisplay.format(date) : ''}</small>
+                      </span>
+                      <span className={`status ${previous.status}`}>{t[previous.status]}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>}
+      </Modal>}
+    </div>
+  );
 }
