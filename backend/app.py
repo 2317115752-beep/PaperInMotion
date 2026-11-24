@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
 import logging
+import re
 import shutil
 import traceback
 from pathlib import Path
@@ -13,7 +14,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -29,6 +30,8 @@ Style = Literal['editorial', 'midnight', 'classroom']
 Level = Literal['introductory', 'advanced']
 Condition = Literal['A', 'B', 'C']
 MAX_UPLOAD = 25 * 1024 * 1024
+JOB_ID = re.compile(r'[0-9a-f]{32}')
+DELETING_PREFIX = '.deleting-'
 
 
 class Revision(BaseModel):
@@ -43,9 +46,19 @@ class Revision(BaseModel):
 async def lifespan(app):
     global POOL
     POOL = ThreadPoolExecutor(max_workers=1)
+    for folder in DATA.glob(DELETING_PREFIX + '*'):
+        if JOB_ID.fullmatch(folder.name.removeprefix(DELETING_PREFIX)) and not folder.is_symlink():
+            try:
+                shutil.rmtree(folder)
+            except OSError as exc:
+                logging.warning('Could not finish deleting job files (%s)', type(exc).__name__)
     for path in DATA.glob('*/job.json'):
+        if not JOB_ID.fullmatch(path.parent.name) or path.parent.is_symlink():
+            continue
         try:
             job = json.loads(path.read_text('utf-8'))
+            if job['id'] != path.parent.name:
+                continue
             if job['status'] in ('running', 'queued'):
                 job.update(status='failed', error='服务重启中断了任务，请重新生成。', message='任务已中断')
             JOBS[job['id']] = job
@@ -61,7 +74,7 @@ app = FastAPI(title='Paper in Motion', version='1.0.0', lifespan=lifespan)
 
 @app.middleware('http')
 async def local_guard(request, call_next):
-    if request.method == 'POST':
+    if request.method in ('POST', 'DELETE'):
         origin = request.headers.get('origin')
         if origin and origin not in ('http://127.0.0.1:8000','http://localhost:8000','http://127.0.0.1:5173','http://localhost:5173'):
             return JSONResponse({'detail': '仅允许本机页面提交任务。'}, status_code=403)
@@ -249,7 +262,8 @@ def retry_job(job_id: str):
         # Checkpoints from the first release use a different storyboard format.
         options = original.get('revision') or {}
         if (source/'storyboard-plan.json').is_file() and 'style' in original:
-            job['revision'] = {'stage': 'production', 'narrations': {}}
+            job['revision'] = (options if options.get('stage') == 'production'
+                               else {'stage': 'production', 'calibrate_duration': True})
         elif options:
             job['revision'] = options
         elif (source/'method.json').is_file() and original.get('stage') == 'storyboard':
@@ -269,7 +283,8 @@ def retry_job(job_id: str):
 @app.get('/api/jobs')
 def list_jobs():
     with LOCK:
-        return json.loads(json.dumps(sorted(JOBS.values(), key=lambda j:j['created_at'],reverse=True)[:20]))
+        jobs = sorted(JOBS.values(), key=lambda job: job['created_at'], reverse=True)[:20]
+        return [public_job(job) for job in jobs]
 
 
 @app.get('/api/jobs/{job_id}')
@@ -277,18 +292,52 @@ def get_job(job_id:str):
     with LOCK:
         if job_id not in JOBS:
             raise HTTPException(404,'未找到任务。')
-        return json.loads(json.dumps(JOBS[job_id]))
+        return public_job(JOBS[job_id])
+
+
+def public_job(job):
+    result = json.loads(json.dumps(job))
+    if result.get('parent_id') not in JOBS:
+        result.pop('parent_id', None)
+    return result
+
+
+@app.delete('/api/jobs/{job_id}', status_code=204, response_class=Response)
+def delete_job(job_id: str):
+    with LOCK:
+        job = JOBS.get(job_id)
+        if not JOB_ID.fullmatch(job_id) or job is None:
+            raise HTTPException(404, 'Job not found.')
+        if job['status'] not in ('complete', 'failed'):
+            raise HTTPException(409, 'Wait for the job to finish before deleting it.')
+
+        folder = DATA/job_id
+        pending = DATA/(DELETING_PREFIX + job_id)
+        try:
+            if folder.is_symlink() or pending.is_symlink():
+                raise OSError('Unexpected task directory')
+            if folder.exists():
+                # Keep interrupted deletions out of the history loaded on startup.
+                folder.rename(pending)
+            if pending.exists():
+                shutil.rmtree(pending)
+        except OSError as exc:
+            logging.warning('Could not delete job %s files (%s)', job_id, type(exc).__name__)
+            raise HTTPException(500, 'Could not delete the job files. Try again.') from None
+        del JOBS[job_id]
 
 
 @app.api_route('/api/jobs/{job_id}/files/{filename}', methods=['GET','HEAD'])
 def file_response(job_id:str,filename:str):
     types = {'video.mp4':'video/mp4','subtitles.srt':'application/x-subrip','storyboard.json':'application/json','project.zip':'application/zip', 'audio.zip':'application/zip', 'evaluation.json':'application/json', 'poster.png':'image/png'}
-    if job_id not in JOBS or filename not in types or JOBS[job_id]['status']!='complete':
-        raise HTTPException(404,'文件尚未生成。')
-    path = DATA/job_id/filename
-    if not path.is_file():
-        raise HTTPException(404,'文件不存在。')
-    return FileResponse(path,media_type=types[filename],filename=filename,content_disposition_type='inline' if filename in ('video.mp4', 'poster.png') else 'attachment')
+    with LOCK:
+        job = JOBS.get(job_id)
+        if job is None or filename not in types or job['status'] != 'complete':
+            raise HTTPException(404,'文件尚未生成。')
+        path = DATA/job_id/filename
+        if not path.is_file():
+            raise HTTPException(404,'文件不存在。')
+        return FileResponse(path,media_type=types[filename],filename=filename,content_disposition_type='inline' if filename in ('video.mp4', 'poster.png') else 'attachment')
 
 
 if (ROOT/'web/dist').exists():

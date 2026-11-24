@@ -33,7 +33,7 @@ class ChatLimitTests(unittest.TestCase):
                       'completion_tokens_details': {'reasoning_tokens': 321}},
         })
 
-    def test_qwen_request_disables_thinking_and_uses_configured_budget(self):
+    def test_qwen_request_enables_thinking_and_uses_configured_budget(self):
         with self.settings(BAILIAN_CHAT_MAX_TOKENS='16384'), patch('backend.providers.httpx.Client') as client:
             post = client.return_value.__enter__.return_value.post
             post.return_value = self.response()
@@ -41,7 +41,10 @@ class ChatLimitTests(unittest.TestCase):
         self.assertEqual(result, {'title': 'A compact plan'})
         payload = post.call_args.kwargs['json']
         self.assertEqual(payload['max_tokens'], 16384)
-        self.assertIs(payload['enable_thinking'], False)
+        self.assertIs(payload['enable_thinking'], True)
+        self.assertEqual(payload['thinking_budget'], 4096)
+        self.assertIn('Reason carefully about the supplied evidence', payload['messages'][0]['content'])
+        self.assertNotIn('No thinking', payload['messages'][0]['content'])
         self.assertNotIn('chat_template_kwargs', payload)
         self.assertEqual(payload['model'], 'qwen3.8-flash')
         self.assertEqual(post.call_args.args[0], 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions')

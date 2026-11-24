@@ -451,12 +451,14 @@ progress.failed { accent-color: #bc4c62; }
 .guide-list { display: grid; gap: 7px; padding-inline-start: 20px; margin: 15px 0; font-size: 14px; }
 .guide-list p { margin: 2px 0; }
 .history-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.history-list button {
+.history-list li { display: flex; gap: 6px; }
+.history-open-job {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   min-height: 48px;
   padding: 6px 9px;
   text-align: start;
@@ -465,8 +467,24 @@ progress.failed { accent-color: #bc4c62; }
   background: #fafafd;
   color: var(--ink);
 }
-.history-list button:hover:not(:disabled) { border-color: var(--accent); }
-.history-list button:disabled { opacity: .55; }
+.history-open-job:hover:not(:disabled) { border-color: var(--accent); }
+.history-open-job:disabled { opacity: .55; }
+.history-delete-job {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  flex: none;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fafafd;
+  color: #892d3d;
+}
+.history-delete-job:hover { border-color: #d48897; background: #fbecee; }
+.history-delete-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.history-delete-actions .secondary-button { margin-top: 0; }
+.delete-job-confirm { background: #a1374c; }
+.delete-job-confirm:hover:not(:disabled) { background: #892d3d; }
 .history-list strong, .history-list small { display: block; overflow-wrap: anywhere; }
 .history-list strong { font-size: 14px; }
 .history-list small { color: var(--muted); font-size: 12px; }

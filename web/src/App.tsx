@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import {
   ArrowDownToLine, ArrowRight, ArrowUpRight, BookOpen, ChevronDown, CircleAlert,
   CircleCheck, Clapperboard, Clock3, FileText, Film, Globe2, History, Layers3,
-  LoaderCircle, Play, Plus, Settings2, Upload, X,
+  LoaderCircle, Play, Plus, Settings2, Trash2, Upload, X,
 } from 'lucide-react';
 import { messages, readUiLanguage, translateBackendMessage, type Language, type Messages } from './i18n';
 
@@ -110,6 +110,19 @@ function initialJobId() {
   }
 }
 
+function forgetJob(id: string) {
+  try {
+    if (localStorage.getItem('pim-last-job') === id) setLocalPreference('pim-last-job');
+  } catch {
+    // The studio still works when storage is disabled.
+  }
+  const url = new URL(window.location.href);
+  if (url.searchParams.get('job') === id) {
+    url.searchParams.delete('job');
+    window.history.replaceState(null, '', url);
+  }
+}
+
 function activeJob(job: Job | null) {
   return job?.status === 'queued' || job?.status === 'running';
 }
@@ -175,27 +188,29 @@ function OptionGroup<T extends string | number>({ label, options, value, choose,
   );
 }
 
-function Modal({ title, close, closeLabel, children }: {
+function Modal({ title, close, closeLabel, children, closeDisabled = false, initialFocus }: {
   title: string; close: () => void; closeLabel: string; children: ReactNode;
+  closeDisabled?: boolean; initialFocus?: RefObject<HTMLButtonElement | null>;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const element = dialog.current;
     element?.showModal();
+    initialFocus?.current?.focus();
     return () => element?.close();
-  }, []);
+  }, [initialFocus]);
   return (
     <dialog
       ref={dialog}
       className="modal"
       aria-labelledby="dialog-heading"
-      onCancel={event => { event.preventDefault(); close(); }}
-      onClick={event => { if (event.target === event.currentTarget) close(); }}
+      onCancel={event => { event.preventDefault(); if (!closeDisabled) close(); }}
+      onClick={event => { if (!closeDisabled && event.target === event.currentTarget) close(); }}
     >
       <div className="modal-body">
         <div className="modal-heading">
           <h2 id="dialog-heading">{title}</h2>
-          <button className="icon-button" onClick={close} aria-label={closeLabel} autoFocus><X size={20} /></button>
+          <button className="icon-button" onClick={close} aria-label={closeLabel} autoFocus={!initialFocus} disabled={closeDisabled}><X size={20} /></button>
         </div>
         {children}
       </div>
@@ -422,7 +437,13 @@ export default function App() {
   const [retryError, setRetryError] = useState<string | null>(null);
   const [history, setHistory] = useState<Job[] | null>(null);
   const [historyError, setHistoryError] = useState(false);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const [deleteCandidate, setDeleteCandidate] = useState<Job | null>(null);
+  const [deletingJob, setDeletingJob] = useState(false);
+  const [deleteError, setDeleteError] = useState<'deleteJobError' | 'deleteJobActive' | null>(null);
   const [mediaError, setMediaError] = useState(false);
+  const deletedJobIds = useRef(new Set<string>());
+  const cancelDeleteButton = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const supplementInput = useRef<HTMLInputElement>(null);
   const jobId = job?.id;
@@ -456,9 +477,16 @@ export default function App() {
     if (!id) return;
     const controller = new AbortController();
     fetch(`/api/jobs/${id}`, { signal: controller.signal })
-      .then(readResponse<Job>)
-      .then(result => { if (!controller.signal.aborted) setJob(current => current ?? result); })
-      .catch(() => { if (!controller.signal.aborted) setLastJobError(true); });
+      .then(async response => {
+        if (controller.signal.aborted || deletedJobIds.current.has(id)) return;
+        if (response.status === 404) {
+          forgetJob(id);
+          return;
+        }
+        const result = await readResponse<Job>(response);
+        if (!controller.signal.aborted && !deletedJobIds.current.has(id)) setJob(current => current ?? result);
+      })
+      .catch(() => { if (!controller.signal.aborted && !deletedJobIds.current.has(id)) setLastJobError(true); });
     return () => controller.abort();
   }, []);
 
@@ -473,7 +501,8 @@ export default function App() {
     async function poll() {
       try {
         const result = await readResponse<Job>(await fetch(`/api/jobs/${encodeURIComponent(jobId!)}`, { signal: controller.signal }));
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || deletedJobIds.current.has(result.id)) return;
+        if (result.parent_id && deletedJobIds.current.has(result.parent_id)) delete result.parent_id;
         setJob(result);
         setPollError(false);
         if (activeJob(result)) timer = setTimeout(poll, 1500);
@@ -505,7 +534,7 @@ export default function App() {
     const controller = new AbortController();
     void loadHistory(controller.signal);
     return () => controller.abort();
-  }, [modal, loadHistory]);
+  }, [modal, loadHistory, historyVersion]);
 
   function validateFile(candidate: File): UploadError | null {
     if (!candidate.name.toLowerCase().endsWith('.pdf')) return 'invalidPdf';
@@ -544,6 +573,41 @@ export default function App() {
     setLastJobError(false);
     setRetryError(null);
     window.history.replaceState(null, '', window.location.pathname);
+  }
+
+  async function deleteHistoryJob() {
+    if (!deleteCandidate || deletingJob) return;
+    const id = deleteCandidate.id;
+    setDeletingJob(true);
+    setDeleteError(null);
+    try {
+      const response = await fetch(`/api/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (response.status === 409) {
+        setDeleteError('deleteJobActive');
+        return;
+      }
+      if (response.status !== 204 && response.status !== 404) throw new Error('job-delete-failed');
+      deletedJobIds.current.add(id);
+      forgetJob(id);
+      setJob(current => {
+        if (current?.id === id) return null;
+        if (current?.parent_id === id) return { ...current, parent_id: undefined };
+        return current;
+      });
+      if (jobId === id) {
+        setTab('preview');
+        setPollError(false);
+        setLastJobError(false);
+        setRetryError(null);
+      }
+      setHistory(current => current?.filter(item => item.id !== id) ?? null);
+      setHistoryVersion(version => version + 1);
+      setDeleteCandidate(null);
+    } catch {
+      setDeleteError('deleteJobError');
+    } finally {
+      setDeletingJob(false);
+    }
   }
 
   async function submit(demo?: Topic) {
@@ -806,29 +870,57 @@ export default function App() {
         <RevisionForm job={job} t={t} submitting={submitting} submitRevision={revision => void submitRevision(revision)} />
         {revisionError !== null && <div className="notice error" role="alert"><ServiceMessage value={revisionError} lang={lang} /></div>}
       </Modal>}
-      {modal === 'history' && <Modal title={t.history} close={closeModal} closeLabel={t.close}>
+      {modal === 'history' && !deleteCandidate && <Modal title={t.history} close={closeModal} closeLabel={t.close}>
         {historyError ? <p role="alert">{t.historyError}</p>
           : !history ? <p role="status">{t.loading}</p>
           : history.length === 0 ? <p>{t.noHistory}</p>
           : <ul className="history-list">
               {history.map(previous => {
                 const date = new Date(previous.created_at);
+                const title = displayJobTitle(previous, t);
                 return (
                   <li key={previous.id}>
                     <button
+                      className="history-open-job"
                       disabled={busy && jobId !== previous.id}
                       onClick={() => { showJob(previous); closeModal(); }}
                     >
                       <span>
-                        <strong>{displayJobTitle(previous, t)}</strong>
+                        <strong>{title}</strong>
                         <small>{Number.isFinite(date.getTime()) ? dateDisplay.format(date) : ''}</small>
                       </span>
                       <span className={`status ${previous.status}`}>{t[previous.status]}</span>
                     </button>
+                    {!activeJob(previous) && <button
+                      className="history-delete-job"
+                      aria-label={`${t.deleteJob} · ${title}`}
+                      title={t.deleteJob}
+                      onClick={() => { setDeleteError(null); setDeleteCandidate(previous); }}
+                    >
+                      <Trash2 size={17} aria-hidden="true" />
+                    </button>}
                   </li>
                 );
               })}
             </ul>}
+      </Modal>}
+      {modal === 'history' && deleteCandidate && <Modal
+        title={t.deleteJobTitle}
+        close={() => setDeleteCandidate(null)}
+        closeLabel={t.close}
+        closeDisabled={deletingJob}
+        initialFocus={cancelDeleteButton}
+      >
+        <p><strong>{displayJobTitle(deleteCandidate, t)}</strong></p>
+        <p>{t.deleteJobWarning}</p>
+        {deleteError && <div className="notice error" role="alert">{t[deleteError]}</div>}
+        <div className="history-delete-actions">
+          <button ref={cancelDeleteButton} className="secondary-button" onClick={() => setDeleteCandidate(null)} disabled={deletingJob}>{t.cancelDeleteJob}</button>
+          <button className="primary-button delete-job-confirm" onClick={() => void deleteHistoryJob()} disabled={deletingJob}>
+            {deletingJob && <LoaderCircle className="spin" size={16} aria-hidden="true" />}
+            <span aria-live="polite">{deletingJob ? t.deletingJob : t.confirmDeleteJob}</span>
+          </button>
+        </div>
       </Modal>}
     </div>
   );

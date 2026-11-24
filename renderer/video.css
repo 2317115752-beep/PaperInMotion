@@ -14,7 +14,7 @@
   --shade: #2a312514;
   --caption: #222c26;
   --captionInk: #fffbf1;
-  background: var(--background);
+  background: linear-gradient(135deg, var(--background) 25%, var(--surfaceAlt));
   color: var(--ink);
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   font-synthesis: none;
@@ -81,21 +81,23 @@
 }
 
 .pim-video-header {
-  top: 43px;
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 24px;
+  top: 40px;
+  gap: 28px;
 }
 
-.pim-brand, .pim-chapter {
+.pim-brand {
   display: flex;
   align-items: center;
   gap: 14px;
   font-size: 23px;
   font-weight: 650;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .pim-brand-icon {
   width: 24px;
+  flex: 0 0 24px;
   height: 30px;
   border: 2px solid var(--accent);
   border-radius: 4px 7px 4px 4px;
@@ -106,42 +108,49 @@
 }
 
 .pim-chapter {
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
 }
 
 .pim-chapter span {
-  color: var(--muted);
-  font-weight: 450;
+  width: 18px;
+  height: 4px;
+  border-radius: 3px;
+  background: var(--line);
+}
+
+.pim-chapter span.is-viewed {
+  background: var(--accent);
 }
 
 .pim-scene-title {
   position: absolute;
   left: 104px;
   right: 104px;
-  top: 132px;
-  max-height: 162px;
+  top: 106px;
+  max-height: 153px;
   overflow: hidden;
-  font-size: 80px;
+  font-size: 68px;
   font-weight: 730;
-  letter-spacing: -3px;
+  letter-spacing: 0;
   line-height: 1.06;
   overflow-wrap: anywhere;
   text-wrap: balance;
 }
 
 .pim-scene-title.is-long {
-  font-size: 67px;
+  font-size: 55px;
 }
 
 .pim-video[lang="zh-Hans"] .pim-scene-title {
-  letter-spacing: -1px;
+  letter-spacing: 0;
   line-height: 1.18;
 }
 
 .pim-scene-content {
   position: absolute;
-  inset: 302px 104px 177px;
+  inset: 269px 104px 207px;
   display: grid;
   align-items: center;
 }
@@ -174,7 +183,7 @@
   color: var(--ink);
   font-size: 112px;
   line-height: 1.03;
-  letter-spacing: -.048em;
+  letter-spacing: 0;
   font-weight: 760;
   margin: 26px 0 34px;
   overflow-wrap: anywhere;
@@ -202,65 +211,34 @@
   overflow-wrap: anywhere;
 }
 
-.pim-points {
-  display: grid;
-  gap: 18px;
-  min-width: 0;
-}
-
-.pim-point {
-  position: relative;
-  display: flex;
-  gap: 24px;
-  min-width: 0;
-  align-items: center;
-  padding: 22px 32px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  font-size: 40px;
-  font-weight: 560;
-  line-height: 1.28;
-  overflow-wrap: anywhere;
-}
-
-.pim-point.is-active {
-  border-color: var(--accent);
-  background: var(--accentPale);
-}
-
-.pim-point-marker {
-  flex: 0 0 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-
-.pim-points.is-compact {
-  gap: 15px;
-}
-
-.pim-points.is-compact .pim-point {
-  background: transparent;
-  border-color: transparent;
-  padding: 12px 0;
-  align-items: start;
-  font-size: 33px;
-  line-height: 1.24;
-  gap: 17px;
-}
-
-.pim-points.is-compact .pim-point-marker {
-  flex-basis: 8px;
-  height: 8px;
-  margin-top: 16px;
-}
-
 .pim-flow-layout, .pim-executed-layout, .pim-takeaways {
   display: grid;
   gap: 22px;
   align-content: center;
   min-width: 0;
+}
+
+.pim-talking-point {
+  border-left: 6px solid var(--accent);
+  padding-left: 26px;
+  color: var(--ink);
+  font-size: 46px;
+  font-weight: 630;
+  line-height: 1.27;
+  overflow-wrap: anywhere;
+}
+
+.pim-takeaways .pim-talking-point {
+  max-width: 1360px;
+  padding-left: 40px;
+  font-size: 74px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.pim-takeaways .pim-title-art {
+  width: 430px;
+  margin: 0 auto;
 }
 
 .pim-flow, .pim-state-row {
@@ -297,24 +275,46 @@
 }
 
 .pim-flow-card {
+  position: relative;
+  align-items: center;
+  gap: 22px;
+  justify-content: start;
+  min-height: 150px;
+  padding: 16px 9px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   font-size: 33px;
   line-height: 1.19;
   font-weight: 650;
   overflow-wrap: anywhere;
   text-wrap: balance;
+  text-align: center;
 }
 
-.pim-flow-card.is-active, .pim-state-card.is-active {
+.pim-flow .pim-arrow {
+  align-self: start;
+  margin-top: 28px;
+}
+
+.pim-state-card.is-active {
   background: var(--accentPale);
   border: 2px solid var(--accent);
 }
 
 .pim-flow-step {
-  color: var(--accent);
-  font-size: 22px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  margin-bottom: 21px;
+  width: 53px;
+  height: 53px;
+  border: 2px solid var(--line);
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.pim-flow-card.is-active .pim-flow-step {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 12px var(--accentPale);
 }
 
 .pim-flow-formula {
@@ -325,8 +325,10 @@
   overflow-wrap: anywhere;
 }
 
-.pim-flow-layout .pim-points {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.pim-flow-layout .pim-flow-formula, .pim-flow-layout .pim-talking-point {
+  justify-self: center;
+  max-width: 1340px;
+  margin-top: 22px;
 }
 
 .pim-equation-grid, .pim-figure-layout {
@@ -338,13 +340,6 @@
 
 .pim-equation-grid.is-solo, .pim-figure-layout.is-solo {
   grid-template-columns: minmax(0, 1fr);
-}
-
-.pim-equation-panel, .pim-comparison-card, .pim-table-card {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 15px;
-  box-shadow: 0 15px 24px var(--shade);
 }
 
 .pim-equation-panel {
@@ -359,7 +354,7 @@
   border-left: 3px solid var(--line);
   padding: 12px 21px;
   font-family: Georgia, "STIX Two Text", "Noto Serif", "Songti SC", serif;
-  font-size: 49px;
+  font-size: 59px;
   line-height: 1.18;
   overflow-wrap: anywhere;
 }
@@ -387,21 +382,27 @@
 }
 
 .pim-comparison-card {
-  min-height: 370px;
-  padding: 27px 40px;
+  min-height: 290px;
+  padding: 20px 40px;
+  border-top: 4px solid var(--line);
 }
 
-.pim-comparison-card.is-proposed {
-  background: var(--accentPale);
-  border-color: var(--accent);
+.pim-comparison-card.is-active {
+  border-top-color: var(--accent);
 }
 
 .pim-comparison-card h3 {
   font-size: 42px;
   color: var(--accent);
   margin: 0 0 24px;
-  padding-bottom: 23px;
-  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+}
+
+.pim-comparison-card p {
+  font-size: 41px;
+  line-height: 1.26;
+  overflow-wrap: anywhere;
+  margin: 0;
 }
 
 .pim-executed-header {
@@ -464,10 +465,11 @@
 }
 
 .pim-figure {
+  position: relative;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 13px;
-  padding: 11px;
+  padding: 12px 26px 55px;
   min-width: 0;
   height: 555px;
   overflow: hidden;
@@ -479,6 +481,122 @@
   height: 100%;
   width: 100%;
   object-fit: contain;
+}
+
+.pim-figure-source {
+  position: absolute;
+  left: 26px;
+  right: 26px;
+  bottom: 17px;
+  font-size: 23px;
+  color: #272d2a;
+  text-align: right;
+}
+
+.pim-figure-layout {
+  grid-template-columns: minmax(0, 3fr) minmax(0, 1.05fr);
+}
+
+.pim-figure-layout.is-solo {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pim-figure-layout .pim-talking-point {
+  font-size: 35px;
+}
+
+.pim-chart-layout {
+  --chart-label-width: 430px;
+  --chart-value-width: 172px;
+  --chart-gap: 26px;
+  --chart-padding: 22px;
+  display: grid;
+  gap: 18px;
+}
+
+.pim-chart-heading {
+  display: flex;
+  gap: 20px;
+  align-items: baseline;
+  color: var(--accent);
+  font-size: 36px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.pim-chart-heading span, .pim-chart-source {
+  color: var(--muted);
+  font-size: 24px;
+}
+
+.pim-chart-body {
+  display: grid;
+  gap: 7px;
+}
+
+.pim-chart-row {
+  display: grid;
+  grid-template-columns: var(--chart-label-width) minmax(0, 1fr) var(--chart-value-width);
+  gap: var(--chart-gap);
+  align-items: center;
+  padding: 0 var(--chart-padding);
+  min-height: 58px;
+  border-radius: 8px;
+}
+
+.pim-chart-row.is-active {
+  background: var(--accentPale);
+}
+
+.pim-chart-label, .pim-chart-value {
+  font-size: 27px;
+  font-weight: 650;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.pim-chart-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.pim-chart-track {
+  position: relative;
+  height: 32px;
+  background: repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px 25%);
+}
+
+.pim-chart-bar, .pim-chart-zero {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.pim-chart-bar {
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.pim-chart-zero {
+  width: 2px;
+  background: var(--muted);
+}
+
+.pim-chart-scale {
+  display: block;
+  position: relative;
+  margin-right: calc(var(--chart-value-width) + var(--chart-gap) + var(--chart-padding));
+  margin-left: calc(var(--chart-label-width) + var(--chart-gap) + var(--chart-padding));
+  height: 25px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pim-chart-scale span {
+  position: absolute;
+  transform: translateX(-50%);
 }
 
 .pim-table-card {
@@ -506,6 +624,13 @@
   font-weight: 700;
 }
 
+.pim-table th > span, .pim-table td > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
 .pim-table tr.is-active {
   background: var(--accentPale);
 }
@@ -514,24 +639,11 @@
   border-bottom: none;
 }
 
-.pim-takeaways.is-result .pim-points {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.pim-takeaways.is-result .pim-point {
-  min-height: 140px;
-}
-
-.pim-standalone {
-  font-size: 42px;
-  color: var(--muted);
-}
-
 .pim-caption-wrap {
   position: absolute;
   left: 104px;
   right: 104px;
-  bottom: 85px;
+  bottom: 57px;
   display: flex;
   justify-content: center;
 }
@@ -539,7 +651,7 @@
 .pim-caption {
   display: inline-block;
   max-width: 1550px;
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 14px 27px;
   background: var(--caption);
   color: var(--captionInk);
@@ -552,7 +664,7 @@
 }
 
 .pim-footer {
-  bottom: 31px;
+  bottom: 17px;
   gap: 38px;
   font-size: 22px;
   color: var(--muted);
@@ -565,7 +677,7 @@
 }
 
 .pim-source {
-  flex: 0 0 auto;
+  min-width: 0;
   color: var(--accent);
   font-weight: 650;
 }
@@ -574,7 +686,7 @@
   position: absolute;
   bottom: 0;
   left: 0;
-  height: 7px;
+  height: 4px;
   background: var(--accent);
 }
 
@@ -666,27 +778,12 @@
   width: 100%;
 }
 
-.pim-crop > span, .pim-figure-source {
+.pim-crop > span {
   display: block;
   margin-top: 12px;
   color: var(--muted);
   font-size: 21px;
   text-align: center;
-}
-
-.pim-figure {
-  display: flex;
-  flex-direction: column;
-}
-
-.pim-figure img {
-  flex: 1;
-  min-height: 0;
-}
-
-.pim-figure-source {
-  color: #425346;
-  flex: 0 0 auto;
 }
 
 .pim-state-comparison {
@@ -705,7 +802,7 @@
 
 .pim-table-card.is-dense .pim-table th,
 .pim-table-card.is-dense .pim-table td {
-  padding: 12px 15px;
+  padding: 8px 15px;
 }
 
 .pim-caption.is-long {
@@ -717,4 +814,8 @@
 .pim-equation sub, .pim-equation sup {
   font-size: .64em;
   line-height: 0;
+}
+
+.pim-math .katex {
+  font-size: 1em;
 }

@@ -231,14 +231,16 @@ def chat_json(system, user_content, *, max_tokens=None, task='论文规划', dia
     payload = {
         'model': model,
         'messages': [
-            {'role': 'system', 'content': system + '\nReturn exactly one compact valid JSON object. No thinking, markdown, repeated explanations or extra keys.'},
+            {'role': 'system', 'content': system + '\nReason carefully about the supplied evidence, then return exactly one compact valid JSON object. Do not include chain-of-thought, markdown, repeated explanations or extra keys.'},
             {'role': 'user', 'content': user_content},
         ],
         'temperature': .3, 'max_tokens': limit,
         'response_format': {'type': 'json_object'},
         # Raw HTTP DashScope parameter, not the OpenAI SDK's extra_body wrapper.
-        'enable_thinking': False,
+        'enable_thinking': True,
     }
+    if model == 'qwen3.8-flash':
+        payload['thinking_budget'] = 4096
     timeout = httpx.Timeout(600, connect=20, read=600, write=300, pool=30)
     with httpx.Client(timeout=timeout, follow_redirects=False) as client:
         for attempt in range(3):

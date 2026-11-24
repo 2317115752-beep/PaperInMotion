@@ -8,20 +8,26 @@ import wave
 
 FPS = 24
 PAUSE = .12
+MIN_PLAYBACK_RATE = .92
+MAX_PLAYBACK_RATE = 1.10
+MIN_SCENE_TAIL = round(.20 * FPS)
+IDEAL_SCENE_TAIL = round(.35 * FPS)
+MAX_SCENE_TAIL = round(1.0 * FPS)
 
 
 def narration_segments(narration, language):
-    text = ' '.join(narration.split())
     # Keep decimals, abbreviations, initials and consecutive closing quotation marks intact.
-    boundaries = re.split(r'(?<=[。！？；!?])\s*|(?<=\.)\s+(?=[A-Z“"‘])', text)
     segments = []
-    for piece in boundaries:
-        if not piece:
-            continue
-        if segments and re.search(r'(?:\b(?:Dr|Mr|Mrs|Fig|Eq|et al|vs|etc)|\b[A-Z])\.$', segments[-1]):
-            segments[-1] += ' ' + piece
-        else:
-            segments.append(piece)
+    for paragraph in re.split(r'\n\s*\n', narration):
+        text = ' '.join(paragraph.split())
+        boundaries = re.split(r'(?<=[。！？；!?])\s*|(?<=\.)\s+(?=[A-Z“"‘])', text)
+        parts = []
+        for piece in filter(None, boundaries):
+            if parts and re.search(r'(?:\b(?:Dr|Mr|Mrs|Fig|Eq|et al|vs|etc)|\b[A-Z])\.$', parts[-1]):
+                parts[-1] += ' ' + piece
+            else:
+                parts.append(piece)
+        segments.extend(parts)
     if not segments:
         raise ValueError('Narration is empty.')
     return segments
@@ -85,6 +91,52 @@ def produce_scene_audio(scene, folder, index, language, synthesize, cache_signat
     scene.update(audio_path=str(output), audio_duration=seconds,
                  duration_frames=math.ceil((seconds+.35)*FPS), cues=cues)
     return len(parts)
+
+
+def narration_units(narration, language):
+    if language == 'zh':
+        return sum(not char.isspace() for char in narration)
+    return len(re.findall(r"\w+(?:['’\-]\w+)*", narration))
+
+
+def narration_shortfalls(scenes, target_seconds, language):
+    target_frames = target_seconds * FPS
+    total_audio = sum(scene['audio_duration'] for scene in scenes)
+    if total_audio * FPS / MIN_PLAYBACK_RATE + len(scenes) * MAX_SCENE_TAIL >= target_frames:
+        return [0] * len(scenes)
+    unit_count = sum(narration_units(scene['narration'], language) for scene in scenes)
+    pace = unit_count / total_audio if total_audio else (5.6 if language == 'zh' else 2.5)
+    target_audio = target_seconds - len(scenes) * IDEAL_SCENE_TAIL / FPS
+    shortfall = target_audio - total_audio
+    weights = [max(0, target_audio / len(scenes) - scene['audio_duration']) for scene in scenes]
+    weight_sum = sum(weights)
+    return [round(shortfall * pace * weight / weight_sum) for weight in weights]
+
+
+def fit_scene_durations(scenes, target_seconds):
+    """Fit adjusted speech and short chapter pauses into one shared frame schedule."""
+    target_frames = target_seconds * FPS
+    count = len(scenes)
+    audio_seconds = sum(scene['audio_duration'] for scene in scenes)
+    natural_frames = sum(math.ceil(scene['audio_duration'] * FPS) for scene in scenes)
+    rate = 1.0
+    if not natural_frames + MIN_SCENE_TAIL * count <= target_frames <= natural_frames + MAX_SCENE_TAIL * count:
+        desired_audio_frames = max(1, target_frames - IDEAL_SCENE_TAIL * count)
+        rate = min(MAX_PLAYBACK_RATE, max(MIN_PLAYBACK_RATE, audio_seconds * FPS / desired_audio_frames))
+    speech_frames = [math.ceil(scene['audio_duration'] * FPS / rate) for scene in scenes]
+    tail_frames = min(MAX_SCENE_TAIL * count, max(MIN_SCENE_TAIL * count, target_frames - sum(speech_frames)))
+    pause, extra = divmod(tail_frames, count)
+    for index, (scene, speech_end) in enumerate(zip(scenes, speech_frames)):
+        scene['duration_frames'] = speech_end + pause + (index < extra)
+        if rate != 1.0:
+            scene['audio_duration'] /= rate
+            scene['audio_playback_rate'] = rate
+            previous_end = 0
+            for cue in scene['cues']:
+                start = max(previous_end, min(speech_end - 1, round(cue['start_frame'] / rate)))
+                end = min(speech_end, max(start + 1, round(cue['end_frame'] / rate)))
+                cue.update(start_frame=start, end_frame=end)
+                previous_end = end
 
 
 def schedule_beats(scene):

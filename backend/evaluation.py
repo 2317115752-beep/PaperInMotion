@@ -221,6 +221,13 @@ def evaluate_job(folder, manifest):
             findings.append({'stage': 'production', 'code': 'render_size_mismatch'})
         if abs(media['duration_seconds'] - timing['manifest_duration_seconds']) > 0.25:
             findings.append({'stage': 'production', 'code': 'duration_mismatch'})
+    target = manifest.get('target_duration_seconds')
+    if type(target) in (int, float) and target > 0:
+        measured = media.get('duration_seconds', timing['manifest_duration_seconds'])
+        timing['target_duration_seconds'] = target
+        timing['target_delta_seconds'] = round(measured - target, 3)
+        if abs(measured - target) > target * .05:
+            findings.append({'stage': 'production', 'code': 'target_duration_mismatch'})
     if any(not check['passed'] for check in checks):
         findings.append({'stage': 'example', 'code': 'calculation_checkpoint'})
     if evidence.get('rejected_claims'):
@@ -273,6 +280,7 @@ MECHANICAL_ACTIONS = {
     'render_size_mismatch': 'Use the dimensions supplied in the scene manifest.',
     'missing_stream': 'Verify the intended video and narration streams in the export.',
     'duration_mismatch': 'Compare rendered duration to the accumulated scene durations.',
+    'target_duration_mismatch': 'Review narration coverage and compare the rendered duration to the requested target.',
     'calculation_checkpoint': 'Recheck the plan inputs and run the example again.',
     'unresolved_source_reference': 'Choose a paper excerpt supporting each disputed claim.',
 }
