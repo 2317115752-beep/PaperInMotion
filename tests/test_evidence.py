@@ -48,6 +48,25 @@ class EvidenceSourceTests(unittest.TestCase):
         self.assertEqual([point['value'] for point in chart['points']], [1, 9, 2, -2])
         self.assertEqual(chart['source_label'], 'Computed teaching example')
 
+    def test_equation_steps_and_camera_focus_follow_scene_purpose_and_narration(self):
+        pages = [{'page': 1, 'text': 'An update is added to the baseline value to calculate the final output.'}]
+        equations = [{'label': 'Baseline', 'expression': 'y_0 = W x'},
+                     {'label': 'Update', 'expression': 'y = y_0 + d'}]
+        scene = {'title': 'Apply the update', 'narration': 'Compute the baseline. Add the update.',
+                 'evidence_ids': ['p1-e1']}
+        plan = {'title': 'An additive update', 'scenes': [
+            {**scene, 'visual_type': 'equation', 'equations': equations, 'focus_cue': 1},
+            {**scene, 'visual_type': 'flow', 'equations': equations, 'focus_cue': 1},
+            {**scene, 'visual_type': 'title', 'focus_cue': 2},
+            {**scene, 'visual_type': 'figure', 'focus_cue': True},
+        ]}
+        compiled = compile_storyboard(plan, None, pages)['scenes']
+        self.assertEqual(compiled[0]['equations'], equations)
+        self.assertEqual(compiled[0]['focus_cue'], 1)
+        for fallback in compiled[1:]:
+            self.assertNotIn('equations', fallback)
+            self.assertNotIn('focus_cue', fallback)
+
     def test_table_chart_copies_data_and_cites_original_table(self):
         asset = {'id': 'p102-table1', 'kind': 'table', 'file': 'assets/p102-table1.png',
                  'caption': 'Table 4. Benchmark results', 'table': {

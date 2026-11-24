@@ -74,6 +74,20 @@ function activeStep(scene, frame, count) {
   return Math.max(0, latest);
 }
 
+function focusProgress(scene, frame, fps) {
+  if (!['title', 'figure', 'matrix', 'equation'].includes(scene.visual_type)) return 0;
+  const cues = list(scene.cues);
+  const cue = Number.isInteger(scene.focus_cue) ? cues[scene.focus_cue] : undefined;
+  const fallback = scene.visual_type === 'title' ? cues[0] : cues[1];
+  const start = (cue ?? fallback)?.start_frame;
+  if (!Number.isFinite(start)) return 0;
+  const remaining = scene.duration_frames - start;
+  if (remaining < fps) return 0;
+  const push = Math.min(remaining * .35, fps * .85);
+  const settle = Math.min(remaining * .25, fps * .65);
+  return entrance(frame, start, push) * (1 - entrance(frame, start + push, settle));
+}
+
 function Arrow({active = false, pulseStart}) {
   const frame = useCurrentFrame();
   const animated = active && Number.isFinite(pulseStart) && frame >= pulseStart && frame < pulseStart + 15;
@@ -145,20 +159,26 @@ function Flow({scene, zh, frame}) {
   const nodes = list(scene.nodes).length ? scene.nodes : list(scene.bullets);
   if (nodes.length < 2) return <Takeaways scene={scene} zh={zh} frame={frame} />;
   const labels = nodes.slice(0, 5);
-  const active = activeStep(scene, frame, labels.length);
   const starts = stepTimes(scene, labels.length);
+  const active = Math.max(0, starts.findLastIndex(start => start <= frame));
+  const nextGap = (starts[active + 1] ?? scene.duration_frames) - starts[active];
+  const travel = entrance(frame, starts[active], Math.max(1, Math.min(15, nextGap)));
+  const progress = active ? (active - 1 + travel) / (labels.length - 1) : 0;
   return (
     <div className="pim-flow-layout">
-      <div className="pim-flow">
+      <div className="pim-flow" style={{'--flow-nodes': labels.length}}>
+        <div className="pim-flow-track" aria-hidden="true">
+          <div className="pim-flow-trace" style={{width: progress * 100 + '%'}} />
+        </div>
         {labels.map((node, index) => (
-          <React.Fragment key={index}>
-            {index > 0 && <Arrow active={index <= active} pulseStart={starts[index]} />}
-            <div className={'pim-flow-card' + (index === active ? ' is-active' : '')}>
-              <span className="pim-flow-step" aria-hidden="true" />
-              <Reveal delay={starts[index]}>{limit(node, 74)}</Reveal>
-            </div>
-          </React.Fragment>
+          <div key={index} className={'pim-flow-card' + (index === active ? ' is-active' : index < active ? ' is-visited' : '')}>
+            <span className="pim-flow-step" aria-hidden="true" />
+            <Reveal delay={starts[index]}>{limit(node, 74)}</Reveal>
+          </div>
         ))}
+        <div className="pim-flow-marker-track" aria-hidden="true">
+          <span className="pim-flow-marker" style={{left: progress * 100 + '%'}} />
+        </div>
       </div>
       {scene.formula && <Reveal delay={10} className="pim-flow-formula"><MathExpression text={scene.formula} /></Reveal>}
       <TalkingPoint items={list(scene.bullets).filter(item => !labels.includes(item))} scene={scene} frame={frame} />
@@ -171,7 +191,8 @@ function Chart({scene, zh, frame, appears = 0}) {
   const points = list(chart?.points).filter(point => typeof point?.label === 'string' && Number.isFinite(point?.value)).slice(0, 6);
   if (points.length < 2) return <Takeaways scene={scene} zh={zh} frame={frame} />;
 
-  const starts = appears ? points.map((_, index) => appears + index * 4) : stepTimes(scene, points.length);
+  const stagger = Math.min(4, Math.max(1, Math.floor((scene.duration_frames - appears - 9) / points.length)));
+  const starts = appears ? points.map((_, index) => appears + index * stagger) : stepTimes(scene, points.length);
   const active = starts.findLastIndex(start => start <= frame);
   const minimum = Math.min(0, ...points.map(point => point.value));
   const maximum = Math.max(0, ...points.map(point => point.value));
@@ -188,14 +209,20 @@ function Chart({scene, zh, frame, appears = 0}) {
       </div>}
       <div className="pim-chart-body" role="img" aria-label={points.map(point => `${point.label} ${point.display_value ?? point.value}`).join(', ')}>
         {points.map((point, index) => {
-          const progress = entrance(frame, starts[index], appears ? 10 : 22);
+          const fillFrames = Math.max(1, Math.min(appears ? 10 : 22, scene.duration_frames - starts[index] - 1));
+          const progress = entrance(frame, starts[index], fillFrames);
           const length = Math.abs(point.value) / scale / range * 100 * progress;
+          const tip = point.value < 0 ? origin - length : origin + length;
+          const focused = index === active;
+          const focus = focused ? entrance(frame, starts[index], 11) : 0;
           return (
-            <div key={index} className={'pim-chart-row' + (index === active ? ' is-active' : '')}>
-              <div className="pim-chart-label" style={{opacity: .45 + .55 * progress}}>{limit(point.label, 75)}</div>
+            <div key={index} className={'pim-chart-row' + (focused ? ' is-active' : '')}>
+              <span className="pim-chart-focus" style={{opacity: focus}} aria-hidden="true" />
+              <div className="pim-chart-label" style={{opacity: .7 + .3 * progress}}>{limit(point.label, 75)}</div>
               <div className="pim-chart-track">
                 <span className="pim-chart-zero" style={{left: `${origin}%`}} />
                 <span className="pim-chart-bar" style={{left: `${origin - (point.value < 0 ? length : 0)}%`, width: `${length}%`}} />
+                {focused && <span className="pim-chart-tip" style={{left: tip + '%', opacity: focus}} aria-hidden="true" />}
               </div>
               <div className="pim-chart-value" style={{opacity: progress}}>{point.display_value ?? String(point.value)}</div>
             </div>
@@ -222,14 +249,20 @@ function Equation({scene, zh, frame}) {
   const starts = stepTimes(scene, equations.length);
   return (
     <div className={'pim-equation-grid' + (!scene.bullets?.length ? ' is-solo' : '')}>
-      <Reveal className="pim-equation-panel">
-        {equations.map(({label: name, expression}, index) => (
-          <Reveal key={index} delay={starts[index]} className={'pim-equation' + (index === active ? ' is-active' : '')}>
-            {name && <span className="pim-equation-label">{limit(name, 56)}</span>}
-            <span className={expression.length > 70 ? 'is-long' : ''}><MathExpression text={expression} /></span>
-          </Reveal>
-        ))}
-      </Reveal>
+      <div className="pim-equation-panel">
+        {equations.map(({label: name, expression}, index) => {
+          const progress = entrance(frame, starts[index], 24);
+          return (
+            <div key={index} className={'pim-equation' + (index === active ? ' is-active' : '')}
+              style={{opacity: progress * (index === active ? 1 : .66), transform: 'translateX(' + (1 - progress) * 30 + 'px)'}}>
+              {name && <span className="pim-equation-label">{limit(name, 56)}</span>}
+              <span className={expression.length > 70 ? 'is-long' : ''}><MathExpression text={expression} /></span>
+              {index === active && <span className="pim-equation-underline" aria-hidden="true"
+                style={{transform: 'scaleX(' + progress + ')'}} />}
+            </div>
+          );
+        })}
+      </div>
       <TalkingPoint items={scene.bullets} scene={scene} frame={frame} />
     </div>
   );
@@ -501,7 +534,8 @@ function Content({scene, zh, frame}) {
   if (scene.visual_type === 'title') return <Title {...props} />;
   if (scene.visual_type === 'chart' && scene.chart) return <Chart {...props} />;
   if (scene.visual_type === 'table' && scene.table?.rows?.length) return <Table {...props} />;
-  if (scene.figure_file && ['figure', 'table', 'equation'].includes(scene.visual_type)) return <Figure {...props} />;
+  if (scene.figure_file && ['figure', 'table', 'equation'].includes(scene.visual_type) &&
+    !(scene.visual_type === 'equation' && scene.equations?.length)) return <Figure {...props} />;
   if (scene.example && ['matrix', 'equation', 'comparison'].includes(scene.visual_type)) {
     const isLoRA = scene.example.kind === 'low_rank' && scene.example.input && scene.example.hidden;
     const isCliff = scene.example.kind === 'cliff_geometry';
@@ -557,6 +591,7 @@ function Scene({scene, manifest, index, start, total, previous, visualOnly = fal
     ? `inset(0 ${(1 - entrance(frame, 0, transitionFrames)) * 100}% 0 0)`
     : undefined;
   const entry = entrance(frame, 0, 16);
+  const camera = 1 + .045 * focusProgress(scene, frame, fps);
   const evidence = list(scene.evidence);
   const sourceLabels = [...new Set(evidence.map(item => {
     const page = item.physical_page ?? item.page;
@@ -594,7 +629,7 @@ function Scene({scene, manifest, index, start, total, previous, visualOnly = fal
             </Reveal>
           )}
           <main className={'pim-scene-content' + (title ? ' is-title' : '')}
-            style={{opacity: entry, transform: `translateY(${(1 - entry) * 14}px)`}}>
+            style={{opacity: entry, transform: `translateY(${(1 - entry) * 14}px) scale(${camera})`}}>
             <Content scene={scene} zh={zh} frame={frame} />
           </main>
           {source && <footer className="pim-footer"><span className="pim-source">{source}</span></footer>}

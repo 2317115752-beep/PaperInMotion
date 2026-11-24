@@ -9,15 +9,15 @@ import shutil
 import subprocess
 import zipfile
 
-from pydantic import BaseModel, Field
-from typing import Literal
+from pydantic import BaseModel, Field, StringConstraints, field_validator
+from typing import Annotated, Literal
 from time import monotonic
 from .examples import execute_example
 from .providers import ProviderError, chat_json, get_config, synthesize
 from .paper import CAPTION, read_document
 from .timing import (
     FPS, dump_srt, estimated_cues, fit_scene_durations, narration_shortfalls,
-    narration_units, produce_scene_audio, schedule_beats,
+    narration_segments, narration_units, produce_scene_audio, schedule_beats,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -30,6 +30,11 @@ def save_json(path, obj):
     temporary.replace(path)
 
 
+class EquationStep(BaseModel):
+    expression: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=180)]
+    label: str | None = Field(default=None, max_length=56)
+
+
 class Scene(BaseModel):
     title: str = Field(min_length=1, max_length=90)
     narration: str = Field(min_length=1, max_length=2200)
@@ -37,6 +42,7 @@ class Scene(BaseModel):
     bullets: list[str] = Field(default_factory=list, max_length=4)
     source_pages: list[int] = Field(default_factory=list, max_length=6)
     formula: str = Field(default='', max_length=180)
+    equations: list[EquationStep] = Field(default_factory=list, max_length=3)
     nodes: list[str] = Field(default_factory=list, max_length=5)
     use_example: bool = False
     evidence_ids: list[str] = Field(default_factory=list, max_length=6)
@@ -44,7 +50,13 @@ class Scene(BaseModel):
     chart_column: int | None = Field(default=None, ge=1, le=4)
     beat_labels: list[str] = Field(default_factory=list, max_length=6)
     beat_cues: list[int] = Field(default_factory=list, max_length=6)
+    focus_cue: int | None = None
     comparison: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator('focus_cue', mode='before')
+    @classmethod
+    def optional_focus_index(cls, value):
+        return value if type(value) is int and value >= 0 else None
 
 
 class Storyboard(BaseModel):
@@ -181,12 +193,14 @@ def storyboard_prompt(language, duration, level):
     {unit}, averaging {round(budget / count)} per scene. Only narration counts toward this target. Develop each scene
     with what the viewer sees, why it changes, a concrete example or interpretation, and a transition as applicable.
     Lead with a specific teaching question. Explain background, baseline, contribution, changing intermediate state,
-    comparison using the same toy input, reported findings and limitations. Use vivid action verbs, concise headings,
-    and short speech sentences (ideally one or two ideas per sentence). Keep on-screen text separate from spoken text.
+    comparison using the same toy input, reported findings and limitations. Use vivid action verbs and concise headings.
+    Give each visible action its own short, punctuated narration sentence. Count spoken sentences from zero within
+    each scene, skipping abbreviations. Keep on-screen labels short and use the narration for explanations.
     Use only supplied evidence IDs; add evidence_ids to every scene. Never claim a toy number is a paper result.
     Design this as a visual lesson, not a slide deck: show changing states, connected diagrams, animated equations,
-    bar charts, or source figures as the narration explains them. Avoid repeating title-and-bullet scenes. Prefer
-    the paper's extracted figures and tables when relevant. When an extracted table has a comparable numeric column,
+    bar charts, or source figures as the narration explains them. Vary visual types across adjacent scenes and
+    choose a single main visual per scene. Make one visible change when the narration introduces a new state,
+    result, or comparison. Prefer extracted figures and tables when relevant. When a table has a comparable numeric column,
     include one chart scene using that table's visual_id and a chart_column index listed in chart_columns.
     chart_column=1 means the first metric column immediately after the leftmost row-label column.
     The application supplies every plotted value directly from the extracted table. Cite evidence from the same
@@ -196,12 +210,19 @@ def storyboard_prompt(language, duration, level):
     and set use_example on one dedicated matrix scene. Other scenes may explain specific verified steps in a flow
     diagram or equation. Without computed states, use labeled qualitative comparisons or diagrams.
     For timed demonstrations specify beat_labels as 2–5 short variable/state/operation names in order, and
-    matching zero-based beat_cues indices when narration sentence cues are clear. Return JSON only.
+    matching zero-based beat_cues indices when narration sentence cues are clear.
+    On selected title, figure, matrix, or equation scenes, use focus_cue for a gentle camera push when one
+    narration sentence introduces a visual detail that benefits from a closer look. Omit it elsewhere.
     For formula fields, write one KaTeX-compatible LaTeX expression without surrounding math delimiters.
+    For an equation scene with an evidenced derivation, provide 2–3 equations in order with an expression and
+    an optional short label per step. Add a beat label and narration cue for each step. Use a single formula
+    and omit equations when the source and computed example do not support a derivation. Return JSON only.
     {{"title":"short title","scenes":[{{"title":"short title","narration":"plain spoken text, no Markdown",
     "visual_type":"title|bullets|flow|comparison|equation|matrix|figure|table|chart|result","bullets":["short labels"],
     "evidence_ids":["p1-e1"],"formula":"one math expression","nodes":["input","step","output"],
-    "visual_id":"","chart_column":1,"beat_labels":[],"beat_cues":[],"comparison":{{"baseline":"...","proposed":"..."}},
+    "equations":[{{"label":"short step label","expression":"one math expression"}}],
+    "visual_id":"","chart_column":1,"beat_labels":[],"beat_cues":[],"focus_cue":1,
+    "comparison":{{"baseline":"...","proposed":"..."}},
     "use_example":false}}]}}. Omit unused optional fields. Titles under 52 characters in English or 28 in Chinese."""
 
 
@@ -381,6 +402,12 @@ def compile_storyboard(raw, example, pages, language='en'):
             scene['visual_type'] = 'flow'
         elif scene['visual_type'] == 'bullets' and len(scene['nodes']) >= 2:
             scene['visual_type'] = 'flow'
+        if scene['visual_type'] != 'equation' or not scene['equations']:
+            scene.pop('equations')
+        focus_cue = scene['focus_cue']
+        if (focus_cue is None or scene['visual_type'] not in ('title', 'figure', 'matrix', 'equation')
+                or focus_cue >= len(narration_segments(scene['narration'], language))):
+            scene.pop('focus_cue')
     assign_example_chart(result['scenes'], example, language)
     return result
 
@@ -649,8 +676,10 @@ def run_job(job, folder, update):
         method = json.loads((folder/'method.json').read_text(encoding='utf-8'))
         storyboard = json.loads((folder/'storyboard-plan.json').read_text(encoding='utf-8'))
         for key, narration in revision.get('narrations', {}).items():
-            storyboard['scenes'][int(key)-1]['narration'] = narration
-            storyboard['scenes'][int(key)-1]['beat_cues'] = []
+            scene = storyboard['scenes'][int(key)-1]
+            scene['narration'] = narration
+            scene['beat_cues'] = []
+            scene.pop('focus_cue', None)
         update(stage='storyboard', progress=49, message='Reusing verified method and storyboard')
     else:
         update(stage='reading', progress=5, message='Extracting PDF text and visual evidence')
@@ -729,6 +758,9 @@ def run_job(job, folder, update):
         fit_scene_durations(scenes, duration)
     for scene in scenes:
         scene['beats'] = schedule_beats(scene)
+        focus_cue = scene.get('focus_cue')
+        if type(focus_cue) is not int or not 0 <= focus_cue < len(scene['cues']):
+            scene.pop('focus_cue', None)
     actual = sum(s['duration_frames'] for s in scenes)/FPS
     if not job['is_demo'] and round(actual) != duration:
         warnings.append(f'Target duration {duration}s. Measured narration yields {round(actual)}s.')

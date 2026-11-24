@@ -45,7 +45,7 @@ class DurationTests(unittest.TestCase):
             'title': 'Three layers',
             'scenes': [
                 {'title': f'Layer {index}', 'narration': f'This layer uses the same weights at step {index}',
-                 'evidence': [excerpt]} for index in range(1, 4)
+                 'evidence': [excerpt], 'visual_type': 'equation', 'focus_cue': 0} for index in range(1, 4)
             ],
         }
         additions = {
@@ -90,6 +90,9 @@ class DurationTests(unittest.TestCase):
                 plan = json.loads((folder / 'storyboard-plan.json').read_text())
                 self.assertTrue(plan['duration_extension_attempted'])
                 self.assertTrue(plan['scenes'][0]['narration'].endswith(additions['scene-1']))
+                rendered_scene = json.loads((folder / 'manifest.json').read_text())['scenes'][0]
+                self.assertEqual(rendered_scene['focus_cue'], 0)
+                self.assertIn('same weights', rendered_scene['cues'][0]['text'])
                 report = json.loads((folder / 'evaluation.json').read_text())
                 self.assertEqual(report['timing']['manifest_duration_seconds'], 60.0)
                 self.assertEqual(report['timing']['target_delta_seconds'], 0.0)
@@ -109,6 +112,8 @@ class DurationTests(unittest.TestCase):
                 run_job(manual, folder, lambda **_changes: None)
                 tts.assert_not_called()
                 chat.assert_not_called()
+                rendered_scene = json.loads((folder / 'manifest.json').read_text())['scenes'][0]
+                self.assertNotIn('focus_cue', rendered_scene)
                 report = json.loads((folder / 'evaluation.json').read_text())
                 self.assertLess(report['timing']['target_delta_seconds'], -20)
                 self.assertIn('target_duration_mismatch', [finding['code'] for finding in report['findings']])
