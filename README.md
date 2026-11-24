@@ -4,13 +4,13 @@
 
 ## 使用工作台
 
-在本机双击 `Start.command`，然后打开 [视频工作台](http://127.0.0.1:8000)。上传 PDF 后选择目标时长、讲解深度和 Editorial、Midnight 或 Classroom 主题。内置 LoRA 和 CLIFF 演示可用于预览计算动画，演示没有云配音。
+按下方的 Windows 或 macOS 说明启动项目，再打开 [视频工作台](http://127.0.0.1:8000)。上传 PDF 后选择目标时长、讲解深度和 Editorial、Midnight 或 Classroom 主题。内置 LoRA 和 CLIFF 演示可用于预览计算动画，演示没有云配音。
 
 工作台会显示任务进度和旧任务。成片可下载 MP4、SRT、分镜、音轨、可编辑 Remotion ZIP 和评估 JSON。对已完成的视频，可以按论文理解、示例、分镜或制作阶段创建修改版。更换主题和编辑单幕旁白会复用仍可用的已合成音频。失败任务可从已保存的分镜或分析阶段继续。
 
 ## 配置百炼
 
-项目在本机桌面的 `PaperInMotion` 文件夹，实际配置文件是该目录下的 `.env`。已准备好模型配置，默认使用北京通用接口，申请凭证后填写 API Key：
+在你下载或克隆的 `PaperInMotion` 项目根目录编辑 `.env`。默认使用北京通用接口，申请凭证后填写 API Key：
 
 ```dotenv
 DASHSCOPE_API_KEY=填写北京地域的API_Key
@@ -36,37 +36,71 @@ BAILIAN_TTS_VOICE_EN=loongbella_v3.1
 
 若明确需要业务空间专属域名，可在 `.env` 设置 `BAILIAN_ENDPOINT_MODE=workspace`，从官方控制台「业务空间管理 → API Host」复制专属域名的完整前缀（例如 `llm-xxx`）作为 `BAILIAN_WORKSPACE_ID`，不要仅凭数字空间 ID 推测域名。该模式使用 `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com`，必须确认 ID 对应可用的专属接口；`Workspace endpoint is invalid` 表示此地址不被服务接受。通用模式不依赖这个 ID。官方[地域接入说明](https://help.aliyun.com/zh/model-studio/regions)推荐专属 API Host；目前所选文本和配音模型已在本机通用接口实测可用。
 
-保存 `.env` 后，在页面右上角「模型配置」点击「重新读取配置」。页面只显示填写状态，实际可用性需要调用验证。可先在项目目录检查配置：
+保存 `.env` 后，在工作台右上角打开模型设置并重新读取配置。也可在项目目录运行配置检查脚本：
+
+```powershell
+# Windows PowerShell
+.\.venv\Scripts\python.exe scripts/check_bailian.py
+```
 
 ```bash
+# macOS
 .venv/bin/python scripts/check_bailian.py
 ```
 
-填写完成后，运行以下命令会实际调用一次短文本规划和中英文短配音，按百炼规则计费：
-
-```bash
-.venv/bin/python scripts/check_bailian.py --live
-```
+在对应平台的命令末尾加上 `--live`，可以验证一次短文本规划和中英文短配音。这会产生百炼 API 用量。
 
 生成时会把论文文字、选取的页面图片和旁白文本发送到阿里云百炼。API 按量收费，失败前已完成的调用也可能计费。
 
 ## 安装与启动
 
-本机已安装依赖，可直接双击 `Start.command`。启动器会打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)，并保存日志；再次启动会复用已有服务。
+两种系统均需要 Git、Node.js 22.12 或更新版本（包含 npm），以及 uv。以下命令由 uv 准备 Python 3.12 和项目虚拟环境。安装工具后，新开一个终端再执行命令。[Git](https://git-scm.com/downloads) · [Node.js](https://nodejs.org/en/download) · [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
-在新机器安装需要 Node.js 22.12+、Python 3.11+（推荐 3.12）与 uv：
+### Windows（PowerShell）
 
-```bash
+```powershell
+git clone https://github.com/2317115752-beep/PaperInMotion.git
+Set-Location PaperInMotion
 uv venv --python 3.12
-uv pip install -r requirements-lock.txt
-npm ci
-npm run build
-cp .env.example .env
-# 编辑 .env，填写北京地域的 DASHSCOPE_API_KEY
-python3 scripts/start.py
+uv pip install --python .\.venv\Scripts\python.exe -r requirements-lock.txt
+npm.cmd ci
+npm.cmd run build
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+notepad.exe .env
 ```
 
-已有 `.env` 时直接编辑，请勿用示例文件覆盖。首次渲染可能下载 Remotion Chromium 浏览器。
+在记事本按上方说明填写 `DASHSCOPE_API_KEY` 并保存。若先体验内置演示，可以将密钥留空。回到同一个 PowerShell 窗口启动：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/start.py
+```
+
+直接调用虚拟环境的 Python 和 `npm.cmd` 即可，无需激活虚拟环境或调整 PowerShell 执行策略。
+
+### macOS（终端）
+
+```bash
+git clone https://github.com/2317115752-beep/PaperInMotion.git
+cd PaperInMotion
+uv venv --python 3.12
+uv pip install --python .venv/bin/python -r requirements-lock.txt
+npm ci
+npm run build
+[ -f .env ] || cp .env.example .env
+open -e .env
+```
+
+在文本编辑中按上方说明填写 `DASHSCOPE_API_KEY` 并保存。若先体验内置演示，可以将密钥留空。回到同一个终端启动：
+
+```bash
+.venv/bin/python scripts/start.py
+```
+
+以后启动时可以直接运行对应平台的启动命令。macOS 也可以在系统能找到 `python3` 时双击项目中的 `Start.command`。
+
+### 打开与停止
+
+启动器会打开浏览器。若未自动打开，请手动访问 [http://127.0.0.1:8000](http://127.0.0.1:8000)。按 `Ctrl+C` 停止服务。首次渲染可能需要联网下载 Remotion 使用的 Chromium，启动和任务日志位于 `data/`。
 
 ## Proposal 验收
 
@@ -84,9 +118,15 @@ python3 scripts/start.py
 
 ## 开发与排查
 
-后端：`.venv/bin/python -m uvicorn backend.app:app --port 8000`。前端：`npm run dev`（5173 端口代理 API）。
+下表中的 Python 命令在 macOS 使用 `.venv/bin/python`，在 Windows PowerShell 使用 `.\.venv\Scripts\python.exe`。Windows PowerShell 可用 `npm.cmd` 执行对应 npm 命令。
 
-离线测试：`.venv/bin/python -m unittest discover -s tests -v`。前端检查：`npm run build`。无 API 音轨验证：`.venv/bin/python scripts/verify_audio_render.py`，使用合成测试音检查渲染。
+| 用途 | 命令 |
+| --- | --- |
+| 单独启动后端 | `python -m uvicorn backend.app:app --port 8000` |
+| 启动前端开发服务（5173 端口代理后端） | `npm run dev` |
+| 离线测试 | `python -m unittest discover -s tests -v` |
+| 前端构建 | `npm run build` |
+| 用合成测试音检查渲染 | `python scripts/verify_audio_render.py` |
 
 服务日志在 `data/server.log`；每个任务的渲染日志在 `data/<任务ID>/render.log`，异常详情在同目录 `error.log`。引用问题可查看 `method-draft.json`（核对前模型结果）、`evidence-excerpts.json`（原文片段表）和 `evidence-check.json`（逐条核对结果）。模型调用日志保留脱敏的服务端错误码、说明和请求 ID，可区分密钥、地域、权限、额度或参数错误。历史 Hugging Face 路由问题见 `DIAGNOSTICS.md`。
 
