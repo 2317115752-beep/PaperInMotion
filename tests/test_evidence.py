@@ -8,11 +8,35 @@ import unittest
 from unittest.mock import patch
 
 from backend.pipeline import (
-    build_evidence_excerpts, normalize_source_text, run_job, verify_sources,
+    build_evidence_excerpts, compile_storyboard, normalize_source_text, run_job, verify_sources,
 )
 
 
 class EvidenceSourceTests(unittest.TestCase):
+    def test_storyboard_preserves_supplement_page_and_checks_reference_ids(self):
+        pages = [{'page': 102, 'physical_page': 2, 'document': 'Supplement 1',
+                  'text': 'The supplement documents the training ablation and its settings.'}]
+        scene = {'title': 'Ablation', 'narration': 'The supplement describes the training settings.',
+                 'evidence_ids': ['p102-e1']}
+        raw = {'title': 'Ablation study', 'scenes': [scene.copy() for _ in range(3)]}
+        compiled = compile_storyboard(raw, None, pages)
+        evidence = compiled['scenes'][0]['evidence'][0]
+        self.assertEqual((evidence['document'], evidence['physical_page']), ('Supplement 1', 2))
+        raw['scenes'][1]['evidence_ids'] = ['p402-e1']
+        with self.assertRaisesRegex(ValueError, 'Scene 2'):
+            compile_storyboard(raw, None, pages)
+
+    def test_executed_example_drives_the_same_values_in_video_and_narration(self):
+        pages = [{'page': 4, 'text': 'The low-rank branch adds an update to the frozen layer output.'}]
+        example = {'kind': 'low_rank', 'baseline': [1, 2], 'output': [9, -2]}
+        scene = {'title': 'LoRA update', 'narration': 'Follow the two branches.',
+                 'evidence_ids': ['p4-e1'], 'visual_type': 'matrix'}
+        raw = {'title': 'LoRA', 'scenes': [scene.copy() for _ in range(3)]}
+        first = compile_storyboard(raw, example, pages)['scenes'][0]
+        self.assertEqual(first['example'], example)
+        self.assertIn('baseline result is 1, 2', first['narration'])
+        self.assertIn('proposed method gives 9, -2', first['narration'])
+
     def test_chinese_pdf_line_wrapping_does_not_reject_a_verbatim_quote(self):
         pages = [{'page': 2, 'text': '为了提高预测精度，本研究引入了遗传算法对多元线性回\n归模型的参数进行优化。'}]
         quote = '遗传算法对多元线性回归模型的参数进行优化'

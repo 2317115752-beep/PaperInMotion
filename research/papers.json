@@ -1,0 +1,124 @@
+{
+  "papers": [
+    {
+      "id": "cliff",
+      "split": "development",
+      "category": "geometric representation",
+      "title": "CLIFF: Carrying Location Information in Full Frames into Human Pose and Shape Estimation",
+      "source": "https://arxiv.org/abs/2208.00571",
+      "pdf": "pdfs/cliff.pdf",
+      "checklist": ["Crop-only uncertainty", "Full-frame bounding-box geometry", "Appearance and geometry feature fusion", "Controlled offset example", "Scope of the reported pose and translation results"],
+      "checkpoints": [
+        {"inputs": "Image-centred box coordinates (200, -100), box size 400, focal length 1000.", "expected": "Normalized geometry is (0.2, -0.1, 0.4)."},
+        {"inputs": "Same cropped appearance, same box and focal length, but centre (-200, 100).", "expected": "Geometry becomes (-0.2, 0.1, 0.4). Appearance can be held fixed, while geometry changes. An actual pose prediction requires a learned regressor."}
+      ],
+      "questions": [
+        {"prompt": "What information does resizing the crop hide?", "reference": "Absolute location and scale of the crop relative to the full image."},
+        {"prompt": "What is combined before regression?", "reference": "Visual crop features and an encoding of full-image bounding-box geometry."},
+        {"prompt": "Compute the geometry for centre (100, 50), box size 300 and focal length 1000.", "reference": "(0.1, 0.05, 0.3) for image-centred coordinates."}
+      ]
+    },
+    {
+      "id": "lora",
+      "split": "development",
+      "category": "training and parameter efficiency",
+      "title": "LoRA: Low-Rank Adaptation of Large Language Models",
+      "source": "https://arxiv.org/abs/2106.09685",
+      "pdf": "pdfs/lora.pdf",
+      "checklist": ["Fine-tuning cost and baseline", "Frozen pretrained matrix", "Two trainable low-rank factors", "Additive branch and scaling", "Qualify task results and parameter savings"],
+      "checkpoints": [
+        {"inputs": "W0=[[1,0,0],[0,1,0]], A=[[1,0,1]], B=[[2],[-1]], x=[1,2,3], scale=1.", "expected": "W0x=[1,2], Ax=[4], BAx=[8,-4], adapted output=[9,-2]."},
+        {"inputs": "Dense d_out by d_in matrix. Adapter rank r.", "expected": "Adapter elements are r(d_in+d_out), versus d_in*d_out dense matrix weights."}
+      ],
+      "questions": [
+        {"prompt": "Which parameters are frozen and which are trainable?", "reference": "The pretrained weights W0 are frozen. The low-rank factors A and B are trained."},
+        {"prompt": "If Ax is 4 and B is [2,-1] transposed, what update is added at scale 1?", "reference": "The update is [8,-4] transposed."},
+        {"prompt": "What happens when adapter scale is zero?", "reference": "The update vanishes and the original frozen-layer output is recovered."}
+      ]
+    },
+    {
+      "id": "resnet",
+      "split": "heldout",
+      "category": "architecture",
+      "title": "Deep Residual Learning for Image Recognition",
+      "source": "https://arxiv.org/abs/1512.03385",
+      "pdf": "pdfs/resnet.pdf",
+      "checklist": ["Degradation problem and plain-network baseline", "Residual mapping and identity shortcut", "Same-input branch addition and dimension handling", "Controlled toy example", "Reported results distinguished from toy example"],
+      "checkpoints": [
+        {"inputs": "x=[2,-1], F(x)=[-0.5,3], identity shortcut, examine the sum before activation.", "expected": "F(x)+x=[1.5,2]."},
+        {"inputs": "Residual branch F(x)=0 and matching dimensions.", "expected": "The pre-activation sum is x."}
+      ],
+      "questions": [
+        {"prompt": "What degradation problem motivates residual learning?", "reference": "A deeper plain network can have worse training error even though it could in principle copy a shallower solution."},
+        {"prompt": "What does F(x) represent in a residual block?", "reference": "The residual mapping H(x)−x. The block obtains H(x) by adding the shortcut."},
+        {"prompt": "For x=[2,-1] and F(x)=[-0.5,3], give the pre-activation sum.", "reference": "[1.5,2]."},
+        {"prompt": "What shortcut is suitable when channel dimensions differ?", "reference": "Use a defined dimension-matching shortcut, such as a learned projection. Plain elementwise identity addition needs matching shapes."},
+        {"prompt": "If a residual branch outputs all zeros and the shortcut is identity, what is passed into the following activation?", "reference": "The unchanged input x."},
+        {"prompt": "Does this hand-calculated block establish a performance gain on a benchmark?", "reference": "It demonstrates the operation only. Performance requires the controlled experiments in the paper."}
+      ]
+    },
+    {
+      "id": "nerf",
+      "split": "heldout",
+      "category": "geometric representation",
+      "title": "NeRF: Representing Scenes as Neural Radiance Fields for View Synthesis",
+      "source": "https://arxiv.org/abs/2003.08934",
+      "pdf": "pdfs/nerf.pdf",
+      "checklist": ["Novel view synthesis and scene representation", "3D position and viewing direction", "Ray sampling and volume rendering", "Transmittance example and reported evaluation", "Limits of sampled or visibility-occluded evidence"],
+      "checkpoints": [
+        {"inputs": "Two ray samples with alpha values 0.5 and 0.5, grayscale colours 0.8 and 0.2, black residual background.", "expected": "Sample weights are 0.5 and 0.25. Output is 0.45 and residual transmittance is 0.25."},
+        {"inputs": "First ray sample fully opaque with colour 0.8.", "expected": "Weight of later samples becomes zero, so output is 0.8."}
+      ],
+      "questions": [
+        {"prompt": "What does NeRF predict from a queried location and direction?", "reference": "Volume density depends on location, and emitted RGB can also depend on viewing direction."},
+        {"prompt": "What is the role of accumulated transmittance in rendering a ray?", "reference": "It measures the fraction that reaches a sample after nearer points, attenuating contributions behind opaque content."},
+        {"prompt": "Two samples have alpha 0.5 and 0.5 and colours 0.8 and 0.2 with black background. What is the pixel?", "reference": "0.45, from 0.5×0.8 + (1−0.5)×0.5×0.2."},
+        {"prompt": "What does an opaque foreground sample do to a later sample's contribution?", "reference": "It drives the transmittance to the later sample to zero."},
+        {"prompt": "How would using different viewing directions at the same position affect a radiance query?", "reference": "View-dependent colour can change. In the original formulation density is a function of position."},
+        {"prompt": "Why sample the ray at multiple points?", "reference": "Multiple samples approximate volume integration, including where density and colour change along the ray."}
+      ]
+    },
+    {
+      "id": "adam",
+      "split": "heldout",
+      "category": "training methods",
+      "title": "Adam: A Method for Stochastic Optimization",
+      "source": "https://arxiv.org/abs/1412.6980",
+      "pdf": "pdfs/adam.pdf",
+      "checklist": ["Noisy stochastic gradients and comparison baseline", "First and second moment updates", "Bias correction and update denominator", "Controlled same-gradient example", "Reported results separated from general claims"],
+      "checkpoints": [
+        {"inputs": "One parameter θ0=1, g1=2, β1=0.9, β2=0.999, α=0.1, moments zero, ε≈0.", "expected": "m1=0.2, v1=0.004, corrected m=2 and v=4, θ1≈0.9."},
+        {"inputs": "Same θ0, g1, α under plain SGD.", "expected": "θ1=0.8."}
+      ],
+      "questions": [
+        {"prompt": "What does Adam's first moment accumulate?", "reference": "An exponential moving average of the gradients."},
+        {"prompt": "What does its second moment accumulate?", "reference": "An exponential moving average of squared gradients, before the square root used in the update."},
+        {"prompt": "Why correct the bias of the moments?", "reference": "Zero-initialized averages are biased toward zero early. Dividing by 1−β^t compensates for the missing history."},
+        {"prompt": "With g=2, β1=0.9 and β2=0.999 at step 1, what are the uncorrected moments?", "reference": "m=0.2 and v=0.004."},
+        {"prompt": "With θ=1, α=0.1, the above moments corrected, and ε negligible, compare Adam and SGD after one step.", "reference": "Adam gives about 0.9. SGD gives 0.8."},
+        {"prompt": "Holding the first moment fixed, what does a larger corrected second moment do to the update magnitude?", "reference": "It enlarges the denominator and reduces the step magnitude."}
+      ]
+    },
+    {
+      "id": "flashattention",
+      "split": "heldout",
+      "category": "computational efficiency",
+      "title": "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness",
+      "source": "https://arxiv.org/abs/2205.14135",
+      "pdf": "pdfs/flashattention.pdf",
+      "checklist": ["HBM traffic of standard attention", "Tiling and on-chip memory", "Running softmax statistics", "Same-output example and storage comparison", "Qualify reported runtime by hardware and setup"],
+      "checkpoints": [
+        {"inputs": "One query, scores [0,ln(3)], scalar values [2,6].", "expected": "Softmax weights [0.25,0.75] and output 5. Tiling changes the update path while preserving the mathematical output."},
+        {"inputs": "First score tile only, then consume the larger second tile.", "expected": "Running max increases from 0 to ln(3). Scale prior denominator and numerator by 1/3 before adding the second contribution."}
+      ],
+      "questions": [
+        {"prompt": "What resource bottleneck does FlashAttention target?", "reference": "Data movement between GPU high-bandwidth memory and on-chip SRAM."},
+        {"prompt": "Why tile Q, K and V?", "reference": "Tiles can be processed in on-chip memory while avoiding write-out of the full attention matrix to high-bandwidth memory."},
+        {"prompt": "What statistics are carried when combining softmax tiles?", "reference": "At minimum a running maximum and normalization mass, with an accumulated weighted value numerator or equivalent normalized output."},
+        {"prompt": "For scores [0, ln(3)] and values [2,6], what is the exact result?", "reference": "5, from weights 1/4 and 3/4."},
+        {"prompt": "What must happen when a new tile increases the maximum?", "reference": "Rescale old contributions into the new maximum's exponential frame before combining them with new terms."},
+        {"prompt": "How do the standard and tiled outputs compare in exact arithmetic?", "reference": "They compute the same attention output. The tiled implementation changes the data movement and intermediate storage."}
+      ]
+    }
+  ]
+}
