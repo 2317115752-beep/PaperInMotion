@@ -149,7 +149,9 @@ open -e .env
 
 服务日志在 `data/server.log`；每个任务的渲染日志在 `data/<任务ID>/render.log`，异常详情在同目录 `error.log`。引用问题可查看 `method-draft.json`（核对前模型结果）、`evidence-excerpts.json`（原文片段表）和 `evidence-check.json`（逐条核对结果）。模型调用日志保留脱敏的服务端错误码、说明和请求 ID，可区分密钥、地域、权限、额度或参数错误。历史 Hugging Face 路由问题见 `DIAGNOSTICS.md`。
 
-分镜与论文理解默认最多 12,000 个输出 token，可用 `BAILIAN_CHAT_MAX_TOKENS` 调整。上限不是目标长度；实际调用按百炼规则计费。原始 HTTP 请求通过顶层 `enable_thinking: false` 关闭思考模式，并请求 JSON 对象。1 / 2 / 3 分钟视频分别提示生成 4 / 6 / 8 幕，并限制整段讲稿长度。
+分镜与论文理解默认最多 12,000 个输出 token，可用 `BAILIAN_CHAT_MAX_TOKENS` 调整。上限不是目标长度；实际调用按百炼规则计费。原始 HTTP 请求通过顶层 `enable_thinking: false` 关闭思考模式，并请求 JSON 对象。1 / 2 / 3 / 5 分钟视频分别提示生成 4 / 6 / 8 / 12 幕，实际时长取决于配音。
+
+论文理解和分镜会分别提示连接失败、上传超时和等待响应超时。连续 300 秒无法发送数据会触发上传超时，连续 600 秒未收到数据会触发响应超时。任务目录的 `model_calls.jsonl` 会记录传输异常类别和每次请求的耗时。上传或等待响应超时后，可在任务历史里手动重试。
 
 `finish_reason=length` 作为未完成处理。`model_calls.jsonl` 保存阶段、输出上限、结束原因、用量和长度。`method.json`、`storyboard-plan.json` 和已完成的配音片段可用于重试。既有任务文件和新输出均保存在 `data/<任务ID>/`。
 

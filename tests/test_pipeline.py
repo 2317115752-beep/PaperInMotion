@@ -7,7 +7,7 @@ from unittest.mock import patch
 import numpy as np
 from fastapi.testclient import TestClient
 from backend.examples import execute_example
-from backend.pipeline import verify_sources, write_subtitles, demo_storyboard, read_paper
+from backend.pipeline import verify_sources, write_subtitles, demo_storyboard, read_paper, plan_scenes
 from backend.providers import parse_json, synthesize, ProviderError
 from backend.app import app
 
@@ -42,6 +42,24 @@ class NumericalTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_five_minute_upload_accepts_a_twelve_scene_storyboard(self):
+        pages = [{'page': 1, 'text': 'The paper describes its approach and experiments.'}]
+        raw = {'title': 'Paper', 'scenes': [
+            {'title': f'Scene {i+1}', 'narration': 'A step in the explanation.', 'evidence_ids': ['p1-e1']}
+            for i in range(12)
+        ]}
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch('backend.app.DATA', Path(temporary)), patch('backend.app.JOBS', {}), \
+             patch('backend.app.config', return_value={'api_configured': True}), \
+             patch('backend.app.enqueue', side_effect=lambda job, folder: job), TestClient(app) as client:
+            response = client.post('/api/jobs', files={'file': ('paper.pdf', b'%PDF-test', 'application/pdf')},
+                                   data={'language': 'en', 'duration': 300})
+        self.assertEqual(response.status_code, 202)
+        with patch('backend.pipeline.chat_json', return_value=raw):
+            plan = plan_scenes({}, None, response.json()['language'], response.json()['duration'], pages)
+        self.assertEqual(len(plan['scenes']), 12)
+        self.assertEqual(plan['scenes'][-1]['id'], 'scene-12')
+
     def test_evidence_filter_preserves_only_matching_quotes(self):
         method={'claims':[{'claim':'supported','source_pages':[2],'evidence_quote':'The adapter changes the output.'},{'claim':'unsupported','source_pages':[99],'evidence_quote':'Invented measurement.'}]}
         warnings=verify_sources(method,[{'page':2,'text':'The adapter changes the output. More text.'}])

@@ -701,7 +701,7 @@ export default function App() {
                 <OptionGroup label={t.videoLanguage} options={[
                   { value: 'en', label: t.english }, { value: 'zh', label: t.chinese },
                 ]} value={language} choose={setLanguage} disabled={busy} />
-                <OptionGroup label={t.duration} options={[1, 2, 3].map(minutes => ({
+                <OptionGroup label={t.duration} options={[1, 2, 3, 5].map(minutes => ({
                   value: minutes * 60, label: `${minutes} ${t.minute}`,
                 }))} value={duration} choose={setDuration} disabled={busy} />
                 <OptionGroup className="style-group" label={t.style} options={styles.map(value => ({

@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT/'.env')
 from .providers import get_config, ProviderError, redact
-from .pipeline import run_job, save_json
+from .pipeline import DURATION_SCENES, run_job, save_json
 
 DATA = ROOT/'data'
 DATA.mkdir(exist_ok=True)
@@ -35,7 +35,7 @@ class Revision(BaseModel):
     stage: Literal['understanding', 'example', 'storyboard', 'production']
     notes: str = Field(default='', max_length=2000)
     style: Style | None = None
-    narrations: dict[str, str] = Field(default_factory=dict, max_length=10)
+    narrations: dict[str, str] = Field(default_factory=dict, max_length=max(DURATION_SCENES.values()))
 
 
 
@@ -149,8 +149,8 @@ async def generate(
     duration: int = Form(120), style: Style = Form('editorial'), level: Level = Form('introductory'),
     condition: Condition = Form('C'), supplements: list[UploadFile] | None = File(None),
 ):
-    if duration not in (60, 120, 180):
-        raise HTTPException(422, 'Choose a target length of 60, 120 or 180 seconds.')
+    if duration not in DURATION_SCENES:
+        raise HTTPException(422, 'Choose a target length of 60, 120, 180 or 300 seconds.')
     settings = config()
     if not settings['api_configured']:
         raise HTTPException(400, settings['configuration_error'])

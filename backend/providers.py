@@ -188,7 +188,8 @@ def output_limit(value=None):
     return limit
 
 
-def record_chat_diagnostic(path, *, task, model, limit, attempt, status, result=None):
+def record_chat_diagnostic(path, *, task, model, limit, attempt, status, result=None,
+                           elapsed_seconds=None, transport_error=None):
     """Save counts only, never credentials, paper text, generated text or reasoning."""
     result = result if isinstance(result, dict) else {}
     choices = result.get('choices')
@@ -210,7 +211,17 @@ def record_chat_diagnostic(path, *, task, model, limit, attempt, status, result=
         'reasoning_tokens': count(details.get('reasoning_tokens')),
         'content_chars': text_size(message.get('content')),
         'reasoning_chars': text_size(message.get('reasoning_content') or message.get('reasoning')),
+        'elapsed_seconds': round(elapsed_seconds, 3) if elapsed_seconds is not None else None,
+        'transport_error': transport_error,
     })
+
+
+def chat_transport_error(exc, timeout):
+    if isinstance(exc, httpx.ReadTimeout):
+        return f'等待百炼响应超时（连续 {timeout.read:g} 秒未收到数据）。'
+    if isinstance(exc, httpx.WriteTimeout):
+        return f'向百炼上传请求超时（连续 {timeout.write:g} 秒未能发送数据）。'
+    return f'百炼请求传输中断（{type(exc).__name__}）。'
 
 
 def chat_json(system, user_content, *, max_tokens=None, task='论文规划', diagnostics_path=None):
@@ -228,22 +239,29 @@ def chat_json(system, user_content, *, max_tokens=None, task='论文规划', dia
         # Raw HTTP DashScope parameter, not the OpenAI SDK's extra_body wrapper.
         'enable_thinking': False,
     }
-    with httpx.Client(timeout=httpx.Timeout(300, connect=20), follow_redirects=False) as client:
+    timeout = httpx.Timeout(600, connect=20, read=600, write=300, pool=30)
+    with httpx.Client(timeout=timeout, follow_redirects=False) as client:
         for attempt in range(3):
+            started = time.monotonic()
             try:
                 response = client.post(base + '/compatible-mode/v1/chat/completions', headers={'Authorization': f'Bearer {key}'}, json=payload)
-            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-                if attempt < 2:
-                    time.sleep(attempt + 1)
-                    continue
-                raise ProviderError(f'{task}：无法建立百炼 API 连接（{type(exc).__name__}）。') from None
-            except httpx.RequestError:
-                raise ProviderError(f'{task}：无法连接百炼北京 API，请检查网络或代理。请求未自动重发。') from None
+            except httpx.RequestError as exc:
+                record_chat_diagnostic(diagnostics_path, task=task, model=model, limit=limit,
+                                       attempt=attempt+1, status=None, elapsed_seconds=time.monotonic()-started,
+                                       transport_error=type(exc).__name__)
+                if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+                    if attempt < 2:
+                        time.sleep(attempt + 1)
+                        continue
+                    raise ProviderError(f'{task}：无法建立百炼 API 连接（{type(exc).__name__}）。') from None
+                reason = chat_transport_error(exc, timeout)
+                raise ProviderError(f'{task}：{reason}本次请求未自动重发，可从历史记录重试。') from None
             try:
                 result = response.json()
             except ValueError:
                 result = None
-            record_chat_diagnostic(diagnostics_path, task=task, model=model, limit=limit, attempt=attempt+1, status=response.status_code, result=result)
+            record_chat_diagnostic(diagnostics_path, task=task, model=model, limit=limit, attempt=attempt+1,
+                                   status=response.status_code, result=result, elapsed_seconds=time.monotonic()-started)
             if (response.status_code == 429 or response.status_code >= 500) and attempt < 2:
                 time.sleep(2 * (attempt + 1))
                 continue

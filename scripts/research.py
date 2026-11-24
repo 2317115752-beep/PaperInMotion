@@ -509,7 +509,7 @@ def configure_parser():
                              help='Generate videos using the configured billable endpoints.')
             sub.add_argument('--url', default='http://127.0.0.1:8000')
             sub.add_argument('--language', choices=('en', 'zh'), default='en')
-            sub.add_argument('--duration', choices=(60, 120, 180), type=int, default=120)
+            sub.add_argument('--duration', choices=(60, 120, 180, 300), type=int, default=120)
             sub.add_argument('--level', choices=('introductory', 'advanced'), default='introductory')
             sub.add_argument('--style', choices=('editorial', 'midnight', 'classroom'), default='editorial')
             sub.add_argument('--max-jobs', type=int)

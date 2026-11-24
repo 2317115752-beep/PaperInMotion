@@ -18,6 +18,7 @@ from .paper import read_document
 from .timing import FPS, dump_srt, estimated_cues, produce_scene_audio, schedule_beats
 
 ROOT = Path(__file__).resolve().parent.parent
+DURATION_SCENES = {60: 4, 120: 6, 180: 8, 300: 12}
 
 
 def save_json(path, obj):
@@ -44,7 +45,7 @@ class Scene(BaseModel):
 
 class Storyboard(BaseModel):
     title: str = Field(min_length=1, max_length=150)
-    scenes: list[Scene] = Field(min_length=3, max_length=10)
+    scenes: list[Scene] = Field(min_length=3, max_length=max(DURATION_SCENES.values()))
 
 
 def read_paper(path):
@@ -168,7 +169,7 @@ def storyboard_prompt(language, duration, level):
     rate = 3.7 if language == 'zh' else 2.5
     budget = round(duration * rate)
     unit = 'Chinese characters' if language == 'zh' else 'English words'
-    count = {60: 4, 120: 6, 180: 8}[duration]
+    count = DURATION_SCENES[duration]
     audience = ('students with basic machine-learning knowledge; explain one operation at a time'
                 if level == 'introductory' else 'ML students; include key dependencies, assumptions and trade-offs')
     return f"""Write a single-language narrated animation in {locale} for {audience}.

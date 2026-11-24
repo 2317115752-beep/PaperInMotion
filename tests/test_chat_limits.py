@@ -65,6 +65,21 @@ class ChatLimitTests(unittest.TestCase):
         self.assertIn('12000', str(raised.exception).replace(',', ''))
         self.assertEqual(post.call_count, 1, 'Truncation must not silently create more paid requests.')
 
+    def test_read_timeout_records_the_failure_without_resending(self):
+        with tempfile.TemporaryDirectory() as temporary, self.settings(), patch('backend.providers.httpx.Client') as client:
+            log_path = Path(temporary)/'api.jsonl'
+            post = client.return_value.__enter__.return_value.post
+            post.side_effect = httpx.ReadTimeout('private transport details')
+            with self.assertRaisesRegex(ProviderError, '论文理解.*等待百炼响应超时.*未自动重发'):
+                chat_json('Plan.', 'Data.', task='论文理解', diagnostics_path=log_path)
+            post.assert_called_once()
+            raw = log_path.read_text(encoding='utf-8')
+        row = json.loads(raw)
+        self.assertEqual(row['transport_error'], 'ReadTimeout')
+        self.assertIsNone(row['http_status'])
+        self.assertGreaterEqual(row['elapsed_seconds'], 0)
+        self.assertNotIn('private transport details', raw)
+
     def test_invalid_budget_configuration_stops_before_paid_request(self):
         for budget in ('0', '-1', '1023', '32769', 'unlimited', '12000.5'):
             with self.subTest(budget=budget), self.settings(BAILIAN_CHAT_MAX_TOKENS=budget), patch('backend.providers.httpx.Client') as client:
