@@ -60,6 +60,34 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(plan['scenes']), 12)
         self.assertEqual(plan['scenes'][-1]['id'], 'scene-12')
 
+    def test_plan_uses_natural_chinese_terms_without_editing_source_or_math(self):
+        source_text = '论文使用「玩具输入」这个术语来说明演算过程。'
+        pages = [{'page': 1, 'text': source_text}]
+        formula = r'f(x) = \underbrace{x}_{\text{玩具输入}}'
+        narration = '先看玩具输入。再看玩具示例和玩具数值。'
+        raw = {'title': '玩具示例计算', 'scenes': [{
+            'title': '玩具输入的计算',
+            'visual_type': 'equation',
+            'narration': narration,
+            'bullets': ['玩具示例', '玩具数值'],
+            'formula': formula,
+            'evidence_ids': ['p1-e1'],
+        } for _ in range(4)]}
+        with patch('backend.pipeline.chat_json', return_value=raw):
+            chinese = plan_scenes({}, None, 'zh', 60, pages)
+            english = plan_scenes({}, None, 'en', 60, pages)
+
+        first = chinese['scenes'][0]
+        self.assertEqual(chinese['title'], '演算示例计算')
+        self.assertEqual(first['title'], '简化输入的计算')
+        self.assertEqual(first['narration'], '先看简化输入。再看演算示例和示例数值。')
+        self.assertEqual(first['bullets'], ['演算示例', '示例数值'])
+        self.assertEqual(first['formula'], formula)
+        self.assertEqual(first['evidence'][0]['quote'], source_text)
+        self.assertEqual(english['title'], raw['title'])
+        self.assertEqual(english['scenes'][0]['narration'], narration)
+        self.assertEqual(english['scenes'][0]['bullets'], ['玩具示例', '玩具数值'])
+
     def test_evidence_filter_preserves_only_matching_quotes(self):
         method={'claims':[{'claim':'supported','source_pages':[2],'evidence_quote':'The adapter changes the output.'},{'claim':'unsupported','source_pages':[99],'evidence_quote':'Invented measurement.'}]}
         warnings=verify_sources(method,[{'page':2,'text':'The adapter changes the output. More text.'}])

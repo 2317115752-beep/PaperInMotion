@@ -421,7 +421,7 @@ const chineseBackendMessages: [RegExp, string][] = [
   [/^Scene (\d+) must refer to evidence/, '分镜 $1 需关联论文中的依据。'],
   [/^Prepared demonstration with no cloud speech/, '预制示例不调用云配音或论文分析模型。'],
   [/^The example did not pass numerical validation/, '数值示例未通过验证，分镜使用示意对比。'],
-  [/^This method has no compatible executable example/, '当前方法没有可执行的计算示例，玩具示例仅用于说明机制。'],
+  [/^This method has no compatible executable example/, '当前方法没有可执行的计算示例，视频会用简化示意来讲解。'],
   [/^Paper citations locate the source passages/, '可根据引用定位原文，语义支持程度另行评估。'],
   [/^Target duration (\d+)s. Measured narration yields (\d+)s/, '目标时长 $1 秒，按配音时长生成约 $2 秒。'],
   [/^Additional narration was unavailable. The original voiceover was kept/, '补充讲解未能生成，已保留原配音。'],
