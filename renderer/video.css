@@ -464,6 +464,84 @@
   font-size: 22px;
 }
 
+.pim-derivation {
+  display: grid;
+  width: 100%;
+  grid-template-rows: 306px 155px;
+  gap: 30px;
+  text-align: center;
+}
+
+.pim-derivation-main {
+  display: grid;
+  grid-template-rows: 56px auto 4px;
+  justify-items: center;
+  align-items: center;
+  min-width: 0;
+  padding: 0 25px;
+}
+
+.pim-derivation-label {
+  grid-row: 1;
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 32px;
+  line-height: 1.16;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.pim-derivation-expression,
+.pim-derivation-previous {
+  position: relative;
+  width: 100%;
+  color: var(--accent);
+  line-height: 1.24;
+}
+
+.pim-derivation-fit {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: max-content;
+  white-space: nowrap;
+  transform: translate(-50%, -50%) scale(var(--equation-scale, 1));
+}
+
+.pim-derivation-expression {
+  grid-row: 2;
+  height: 100%;
+  font-size: 98px;
+}
+
+.pim-derivation-rule {
+  grid-row: 3;
+  width: 156px;
+  height: 4px;
+  border-radius: 100px;
+  background: var(--warm);
+}
+
+.pim-derivation-context {
+  display: flex;
+  flex-direction: column;
+  gap: 17px;
+  align-items: center;
+}
+
+.pim-derivation-previous {
+  height: 75px;
+  font-size: 43px;
+  opacity: .72;
+}
+
+.pim-derivation-note {
+  max-width: 100%;
+  color: var(--ink);
+  font-size: 32px;
+  line-height: 1.16;
+  overflow-wrap: anywhere;
+}
+
 .pim-comparison {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

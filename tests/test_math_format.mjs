@@ -55,3 +55,12 @@ test('supports upper-case and named scripts without changing file names or code 
   assert.equal(parts.map(part => part.text).join(''), text);
   assert.deepEqual(parts.filter(part => part.html).map(part => part.text), ['E_{out}', 'y_hat', 'W_q', 'Δₜ']);
 });
+
+test('typesets combining accents together with subscripts in ordinary captions', () => {
+  const text = 'CNN 里 v̂_t 变小，比较 m̂ₜ、x̄_i 和 θ̂_t。代码 `v̂_t` 保持原样。';
+  const parts = formatCaptionMath(text);
+  assert.equal(parts.map(part => part.text).join(''), text);
+  const maths = parts.filter(part => part.html);
+  assert.deepEqual(maths.map(part => part.text), ['v̂_t', 'm̂ₜ', 'x̄_i', 'θ̂_t']);
+  for (const {html} of maths) assert.match(html, /<msub><mover accent="true">/);
+});

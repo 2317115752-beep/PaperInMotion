@@ -43,7 +43,8 @@ const cliffNotation = {
 };
 
 function captionPattern(aliases = []) {
-  const scripted = String.raw`(?:tan |sin |cos )?(?:\\?(?:${greekNames})|[a-zA-Z\p{Script=Greek}])${script}+`;
+  const accentedSymbol = String.raw`[a-zA-Z\p{Script=Greek}][\u0302\u0303\u0304\u0307\u0308]*`;
+  const scripted = String.raw`(?:tan |sin |cos )?(?:\\?(?:${greekNames})|${accentedSymbol})${script}+`;
   const shorthand = [scripted, ...aliases].join('|');
   const codeSpan = String.raw`(?<literal>\x60[^\x60\n]+\x60)`;
   return new RegExp(String.raw`${codeSpan}|${inlineMath}|(?<![\\\w])(?<shorthand>${shorthand})(?!\w|\.[a-zA-Z0-9])`, 'gu');

@@ -1,7 +1,8 @@
-import React, {useMemo} from 'react';
+import React, {useLayoutEffect, useMemo, useRef} from 'react';
 import {AbsoluteFill, Audio, Freeze, Img, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {formatCaptionMath, formatMath, LOWER_SCRIPTS, UPPER_SCRIPTS} from './math-format.mjs';
 import {CliffSequence, CLIFF_SCENES} from './cliff-sequence.jsx';
+import {SourceFigure} from './source-figure.jsx';
 import {canAnimateWorkedSequence, WorkedSequence} from './worked-sequence.jsx';
 import 'katex/dist/katex.min.css';
 import './video.css';
@@ -344,6 +345,7 @@ function Equation({scene, zh, frame}) {
   const equations = list(scene.equations).filter(item => typeof item?.expression === 'string' && item.expression.trim()).slice(0, 3);
   if (!equations.length && scene.formula) equations.push({expression: scene.formula});
   if (!equations.length) return <Takeaways scene={scene} zh={zh} frame={frame} />;
+  if (scene.layout === 'derive' && equations.length > 1) return <Derivation scene={scene} equations={equations} frame={frame} />;
   const active = activeStep(scene, frame, equations.length);
   const starts = stepTimes(scene, equations.length);
   const callout = scene.layout === 'callout' && equations.length === 1;
@@ -368,6 +370,59 @@ function Equation({scene, zh, frame}) {
       </div>
       {hasVisualBeats ? <VisualCues scene={scene} frame={frame} className="pim-equation-cues" />
         : <TalkingPoint items={scene.bullets} scene={scene} frame={frame} />}
+    </div>
+  );
+}
+
+function FittedEquation({expression, className, style}) {
+  const boundsRef = useRef(null);
+  const expressionRef = useRef(null);
+  useLayoutEffect(() => {
+    const bounds = boundsRef.current;
+    const math = expressionRef.current;
+    const fit = () => {
+      const scale = Math.min(1, bounds.clientWidth / (math.offsetWidth || 1), bounds.clientHeight / (math.offsetHeight || 1));
+      math.style.setProperty('--equation-scale', scale);
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(bounds);
+    observer.observe(math);
+    return () => observer.disconnect();
+  }, [expression]);
+  return (
+    <div ref={boundsRef} className={className} style={style}>
+      <div ref={expressionRef} className="pim-derivation-fit"><MathExpression text={expression} /></div>
+    </div>
+  );
+}
+
+function Derivation({scene, equations, frame}) {
+  const visual = timedVisualBeats(scene);
+  const planned = visual.length === equations.length
+    ? visual.map(beat => scene.cues[beat.cue].start_frame) : stepTimes(scene, equations.length);
+  const starts = [0, ...planned.slice(1)];
+  const active = starts.findLastIndex(start => start <= frame);
+  const current = equations[active];
+  const previous = equations[active - 1];
+  const cue = visual.findLast(beat => scene.cues[beat.cue].start_frame <= frame);
+  const note = cue?.label ?? (!visual.length ? list(scene.bullets)[active] : '');
+  const progress = entrance(frame, starts[active], 16);
+  return (
+    <div className="pim-derivation">
+      <div className="pim-derivation-main">
+        {current.label && <div className="pim-derivation-label"><CaptionText caption={limit(current.label, 56)} /></div>}
+        <FittedEquation expression={current.expression} className="pim-derivation-expression"
+          style={{opacity: .28 + .72 * progress, transform: 'translateY(' + ((1 - progress) * 26) + 'px)'}} />
+        <div className="pim-derivation-rule" aria-hidden="true" style={{transform: 'scaleX(' + progress + ')'}} />
+      </div>
+      <div className="pim-derivation-context">
+        {previous && <FittedEquation expression={previous.expression} className="pim-derivation-previous" />}
+        {note && <Reveal key={note} className="pim-derivation-note"
+          delay={cue ? scene.cues[cue.cue].start_frame : starts[active]}>
+          <CaptionText caption={limit(note, 100)} />
+        </Reveal>}
+      </div>
     </div>
   );
 }
@@ -613,6 +668,9 @@ function ExecutedExample({scene, zh, frame, states}) {
 }
 
 function Figure({scene, zh, frame}) {
+  if (scene.visual_type === 'figure' && scene.layout === 'full') {
+    return <SourceFigure scene={scene} zh={zh} frame={frame} CaptionText={CaptionText} />;
+  }
   const progress = entrance(frame, 0, Math.min(scene.duration_frames, 38));
   const detail = scene.layout === 'detail';
   const split = scene.layout === 'split';
@@ -763,7 +821,8 @@ function Scene({scene, manifest, index, start, total, previous, visualOnly = fal
     ? `inset(0 ${(1 - entrance(frame, 0, transitionFrames)) * 100}% 0 0)`
     : undefined;
   const entry = entrance(frame, 0, 16);
-  const camera = 1 + .045 * focusProgress(scene, frame, fps);
+  const stableFocus = scene.layout === 'derive' || (scene.visual_type === 'figure' && scene.layout === 'full');
+  const camera = stableFocus ? 1 : 1 + .045 * focusProgress(scene, frame, fps);
   const evidence = list(scene.evidence);
   const sourceLabels = [...new Set(evidence.map(item => {
     const page = item.physical_page ?? item.page;
