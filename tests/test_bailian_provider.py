@@ -67,6 +67,12 @@ def transport(handler):
 
 
 class BailianProviderTests(unittest.TestCase):
+    def test_punctuation_only_speech_input_is_rejected_before_request(self):
+        with settings(), patch('backend.providers.httpx.Client') as client:
+            with self.assertRaisesRegex(ProviderError, '配音文字或语言无效'):
+                synthesize(' 。！？ ', 'zh', Path('unused.wav'), streaming=True)
+            client.assert_not_called()
+
     def test_streamed_audio_is_validated_without_downloading_the_temporary_url(self):
         audio = wav_bytes()
         results = [

@@ -17,7 +17,7 @@ from .examples import execute_example
 from .providers import ProviderError, chat_json, get_config, synthesize
 from .paper import CAPTION, read_document
 from .timing import (
-    FPS, dump_srt, estimated_cues, fit_scene_durations, narration_shortfalls,
+    FPS, dump_srt, estimated_cues, fit_scene_durations, has_spoken_text, narration_shortfalls,
     narration_segments, narration_units, produce_scene_audio, schedule_beats,
 )
 
@@ -977,7 +977,7 @@ with the requested scene IDs and plain spoken text only.'''
         addition = ' '.join(addition.split())
         if language == 'zh':
             addition = polish_chinese_teaching_text(addition)
-        if not addition or narration_units(addition, language) > shortfalls[index] * 1.3:
+        if not has_spoken_text(addition) or narration_units(addition, language) > shortfalls[index] * 1.3:
             continue
         combined = scene['narration'].rstrip() + '\n\n' + addition
         if len(combined) <= 2200:

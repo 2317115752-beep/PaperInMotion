@@ -15,6 +15,10 @@ IDEAL_SCENE_TAIL = round(.35 * FPS)
 MAX_SCENE_TAIL = round(1.0 * FPS)
 
 
+def has_spoken_text(text):
+    return any(character.isalnum() for character in text)
+
+
 def narration_segments(narration, language):
     # Keep decimals, abbreviations, initials and consecutive closing quotation marks intact.
     segments = []
@@ -22,7 +26,7 @@ def narration_segments(narration, language):
         text = ' '.join(paragraph.split())
         boundaries = re.split(r'(?<=[。！？；!?])\s*|(?<=\.)\s+(?=[A-Z“"‘])', text)
         parts = []
-        for piece in filter(None, boundaries):
+        for piece in (piece.strip() for piece in boundaries if has_spoken_text(piece)):
             if parts and re.search(r'(?:\b(?:Dr|Mr|Mrs|Fig|Eq|et al|vs|etc)|\b[A-Z])\.$', parts[-1]):
                 parts[-1] += ' ' + piece
             else:

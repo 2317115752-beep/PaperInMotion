@@ -15,6 +15,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
+from .timing import has_spoken_text
+
 MAX_AUDIO_BYTES = 64 * 1024 * 1024
 AUDIO_HOST = 'dashscope-result-bj.oss-cn-beijing.aliyuncs.com'
 
@@ -379,7 +381,8 @@ def speech_stream(base, key, payload, diagnostics_path):
 
 
 def synthesize(text, language, output: Path, *, diagnostics_path=None, streaming=False):
-    if language not in ('zh', 'en') or not isinstance(text, str) or not 1 <= len(text) <= 10_000:
+    if (language not in ('zh', 'en') or not isinstance(text, str) or len(text) > 10_000
+            or not has_spoken_text(text)):
         raise ProviderError('配音文字或语言无效。')
     base, key = api_base(), token()
     voice = os.getenv('BAILIAN_TTS_VOICE_ZH' if language == 'zh' else 'BAILIAN_TTS_VOICE_EN', '').strip() or 'loongbella_v3.1'

@@ -5,9 +5,9 @@ import unittest
 from unittest.mock import patch
 import wave
 
-from backend.pipeline import DURATION_SCENES, run_job
+from backend.pipeline import DURATION_SCENES, extend_narration, run_job
 from backend.providers import ProviderError
-from backend.timing import FPS, MAX_SCENE_TAIL, MIN_PLAYBACK_RATE, fit_scene_durations
+from backend.timing import FPS, MAX_SCENE_TAIL, MIN_PLAYBACK_RATE, fit_scene_durations, narration_segments
 
 
 def timed_scene(seconds):
@@ -18,6 +18,19 @@ def timed_scene(seconds):
 
 
 class DurationTests(unittest.TestCase):
+    def test_narration_skips_standalone_punctuation_and_keeps_spoken_segments(self):
+        self.assertEqual(narration_segments('结果是 2.4。！下一步计算角度。\n\n。', 'zh'),
+                         ['结果是 2.4。', '下一步计算角度。'])
+        self.assertEqual(narration_segments('Ready?! Start here.', 'en'), ['Ready?', 'Start here.'])
+        with self.assertRaisesRegex(ValueError, 'Narration is empty'):
+            narration_segments('。！？', 'zh')
+
+    def test_punctuation_only_narration_addition_is_ignored(self):
+        scene = {'title': '结果', 'narration': '结果是 2.4。', 'evidence': [{'id': 'p1-e1'}]}
+        with patch('backend.pipeline.chat_json', return_value={'additions': {'scene-1': '。'}}):
+            self.assertEqual(extend_narration({'scenes': [scene]}, [10], 'zh', None), [])
+        self.assertEqual(scene['narration'], '结果是 2.4。')
+
     def test_target_frames_and_rescaled_cues_match_adjusted_speech(self):
         for duration, count in DURATION_SCENES.items():
             with self.subTest(duration=duration):
