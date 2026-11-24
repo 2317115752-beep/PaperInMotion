@@ -76,6 +76,25 @@ class PipelineTests(unittest.TestCase):
         self.assertIn('00:00:00,000 --> 00:00:01,000',text)
         self.assertIn('00:00:03,000 --> 00:00:04,000',text)
 
+    def test_subtitle_math_keeps_the_original_frame_interval(self):
+        cue = {'text': '观察 gamma_X、x_1 和 J2D_full，在 report_2 中。', 'start_frame': 12, 'end_frame': 36}
+        scenes = [{'duration_frames': 48, 'cues': [cue]}]
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'a.srt'
+            write_subtitles(path, scenes, 'zh')
+            text = path.read_text()
+        self.assertIn('00:00:00,500 --> 00:00:01,500', text)
+        self.assertIn('观察 γ_X、x₁ 和 J_(2D)^(full)，在 report_2 中。', text)
+
+    def test_srt_preserves_filenames_and_simplifies_delimited_math(self):
+        cue = {'text': r'Use w_1.npy and `x_1` with \(\Delta_0\) and $E^2$.',
+               'start_frame': 0, 'end_frame': 24}
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'a.srt'
+            write_subtitles(path, [{'duration_frames': 24, 'cues': [cue]}], 'en')
+            text = path.read_text()
+        self.assertIn('Use w_1.npy and `x_1` with Δ₀ and E².', text)
+
     def test_both_demo_languages_have_verified_matrix_and_no_audio(self):
         for language in ('zh','en'):
             result,example=demo_storyboard(language)

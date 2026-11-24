@@ -1,6 +1,7 @@
 import React, {useMemo} from 'react';
 import {AbsoluteFill, Audio, Freeze, Img, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
-import {formatMath, LOWER_SCRIPTS, UPPER_SCRIPTS} from './math-format.mjs';
+import {formatCaptionMath, formatMath, LOWER_SCRIPTS, UPPER_SCRIPTS} from './math-format.mjs';
+import {CliffSequence, CLIFF_SCENES} from './cliff-sequence.jsx';
 import 'katex/dist/katex.min.css';
 import './video.css';
 
@@ -74,6 +75,25 @@ function activeStep(scene, frame, count) {
   return Math.max(0, latest);
 }
 
+function VisualCues({scene, frame, className = ''}) {
+  const changes = list(scene.visual_beats).filter(beat =>
+    typeof beat?.label === 'string' && Number.isFinite(scene.cues?.[beat.cue]?.start_frame));
+  if (!changes.length) return null;
+  const active = changes.findLastIndex(beat => scene.cues[beat.cue].start_frame <= frame);
+  return (
+    <ol className={'pim-visual-cues ' + className + (changes.length > 4 ? ' is-dense' : '')}>
+      {changes.map((beat, index) => {
+        const shown = entrance(frame, scene.cues[beat.cue].start_frame, 16);
+        return <li key={beat.cue} className={index === active ? 'is-current' : ''}
+          style={{opacity: shown * (index === active ? 1 : .65),
+            transform: 'translateY(' + (1 - shown) * 12 + 'px)'}}>
+          <CaptionText caption={limit(beat.label, 56)} />
+        </li>;
+      })}
+    </ol>
+  );
+}
+
 function focusProgress(scene, frame, fps) {
   if (!['title', 'figure', 'matrix', 'equation'].includes(scene.visual_type)) return 0;
   const cues = list(scene.cues);
@@ -86,6 +106,15 @@ function focusProgress(scene, frame, fps) {
   const push = Math.min(remaining * .35, fps * .85);
   const settle = Math.min(remaining * .25, fps * .65);
   return entrance(frame, start, push) * (1 - entrance(frame, start + push, settle));
+}
+
+function visualCuePulse(scene, frame) {
+  const cues = list(scene.cues);
+  const planned = list(scene.visual_beats).map(beat => cues[beat.cue]?.start_frame).filter(Number.isFinite);
+  const starts = planned.length ? planned : cues.slice(1).map(cue => cue.start_frame);
+  const start = starts.findLast(value => value <= frame);
+  if (!Number.isFinite(start)) return 0;
+  return entrance(frame, start, 12) * (1 - entrance(frame, start + 24, 24));
 }
 
 function Arrow({active = false, pulseStart}) {
@@ -164,6 +193,38 @@ function Flow({scene, zh, frame}) {
   const nextGap = (starts[active + 1] ?? scene.duration_frames) - starts[active];
   const travel = entrance(frame, starts[active], Math.max(1, Math.min(15, nextGap)));
   const progress = active ? (active - 1 + travel) / (labels.length - 1) : 0;
+  const notes = scene.visual_beats?.length ? <VisualCues scene={scene} frame={frame} />
+    : <TalkingPoint items={list(scene.bullets).filter(item => !labels.includes(item))} scene={scene} frame={frame} />;
+  const formula = scene.formula && <Reveal delay={10} className="pim-flow-formula"><MathExpression text={scene.formula} /></Reveal>;
+  if (['stack', 'branch', 'alternating'].includes(scene.layout)) {
+    return (
+      <div className={'pim-flow-layout pim-flow-layout--' + scene.layout}>
+        <div className="pim-shaped-flow-body">
+          <ol className="pim-shaped-flow">
+            {labels.map((node, index) => {
+              const amount = entrance(frame, starts[index], 16);
+              return (
+                <li key={index} className={index === active ? 'is-active' : ''}
+                  style={{opacity: .18 + .82 * amount, '--arrival': amount, '--step': index + 1}}>
+                  <CaptionText caption={limit(node, 74)} />
+                </li>
+              );
+            })}
+          </ol>
+          {scene.layout === 'stack' && <div className="pim-stack-focus">
+            <div className="pim-stack-progress" aria-hidden="true">
+              <span style={{height: progress * 100 + '%'}} />
+            </div>
+            <Reveal key={active} delay={starts[active]} className="pim-stack-label">
+              <CaptionText caption={limit(labels[active], 74)} />
+            </Reveal>
+          </div>}
+        </div>
+        {formula}
+        {notes}
+      </div>
+    );
+  }
   return (
     <div className="pim-flow-layout">
       <div className="pim-flow" style={{'--flow-nodes': labels.length}}>
@@ -173,15 +234,15 @@ function Flow({scene, zh, frame}) {
         {labels.map((node, index) => (
           <div key={index} className={'pim-flow-card' + (index === active ? ' is-active' : index < active ? ' is-visited' : '')}>
             <span className="pim-flow-step" aria-hidden="true" />
-            <Reveal delay={starts[index]}>{limit(node, 74)}</Reveal>
+            <Reveal delay={starts[index]}><CaptionText caption={limit(node, 74)} /></Reveal>
           </div>
         ))}
         <div className="pim-flow-marker-track" aria-hidden="true">
           <span className="pim-flow-marker" style={{left: progress * 100 + '%'}} />
         </div>
       </div>
-      {scene.formula && <Reveal delay={10} className="pim-flow-formula"><MathExpression text={scene.formula} /></Reveal>}
-      <TalkingPoint items={list(scene.bullets).filter(item => !labels.includes(item))} scene={scene} frame={frame} />
+      {formula}
+      {notes}
     </div>
   );
 }
@@ -207,7 +268,7 @@ function Chart({scene, zh, frame, appears = 0}) {
         {chart.title !== scene.title && <strong>{limit(chart.title, 100)}</strong>}
         {chart.unit && <span>{limit(chart.unit, 32)}</span>}
       </div>}
-      <div className="pim-chart-body" role="img" aria-label={points.map(point => `${point.label} ${point.display_value ?? point.value}`).join(', ')}>
+      <div className="pim-chart-body" role="img" aria-label={points.map(point => `${point.label} ${point.display_value ?? number(point.value)}`).join(', ')}>
         {points.map((point, index) => {
           const fillFrames = Math.max(1, Math.min(appears ? 10 : 22, scene.duration_frames - starts[index] - 1));
           const progress = entrance(frame, starts[index], fillFrames);
@@ -224,7 +285,7 @@ function Chart({scene, zh, frame, appears = 0}) {
                 <span className="pim-chart-bar" style={{left: `${origin - (point.value < 0 ? length : 0)}%`, width: `${length}%`}} />
                 {focused && <span className="pim-chart-tip" style={{left: tip + '%', opacity: focus}} aria-hidden="true" />}
               </div>
-              <div className="pim-chart-value" style={{opacity: progress}}>{point.display_value ?? String(point.value)}</div>
+              <div className="pim-chart-value" style={{opacity: progress}}>{point.display_value ?? number(point.value)}</div>
             </div>
           );
         })}
@@ -237,6 +298,7 @@ function Chart({scene, zh, frame, appears = 0}) {
         </div>
       </div>
       {chart.source_label && <div className="pim-chart-source">{limit(chart.source_label, 120)}</div>}
+      <VisualCues scene={scene} frame={frame} />
     </div>
   );
 }
@@ -247,9 +309,13 @@ function Equation({scene, zh, frame}) {
   if (!equations.length) return <Takeaways scene={scene} zh={zh} frame={frame} />;
   const active = activeStep(scene, frame, equations.length);
   const starts = stepTimes(scene, equations.length);
+  const callout = scene.layout === 'callout' && equations.length === 1;
+  const explanation = list(scene.bullets).filter(Boolean);
+  const hasVisualBeats = list(scene.visual_beats).length > 0;
   return (
-    <div className={'pim-equation-grid' + (!scene.bullets?.length ? ' is-solo' : '')}>
-      <div className="pim-equation-panel">
+    <div className={'pim-equation-grid' + (!explanation.length || hasVisualBeats ? ' is-solo' : '') + (callout ? ' pim-equation-callout' : '')}>
+      <div className="pim-equation-panel" style={equations.length === 1
+        ? {transform: 'scale(' + (1 + .04 * visualCuePulse(scene, frame)) + ')'} : undefined}>
         {equations.map(({label: name, expression}, index) => {
           const progress = entrance(frame, starts[index], 24);
           return (
@@ -263,7 +329,8 @@ function Equation({scene, zh, frame}) {
           );
         })}
       </div>
-      <TalkingPoint items={scene.bullets} scene={scene} frame={frame} />
+      {hasVisualBeats ? <VisualCues scene={scene} frame={frame} className="pim-equation-cues" />
+        : <TalkingPoint items={scene.bullets} scene={scene} frame={frame} />}
     </div>
   );
 }
@@ -288,6 +355,7 @@ function Compare({scene, zh, frame}) {
           <p>{limit(Array.isArray(side.items) ? side.items.join(' · ') : side.items, 145)}</p>
         </Reveal>
       ))}
+      <VisualCues scene={scene} frame={frame} className="pim-comparison-cues" />
     </div>
   );
 }
@@ -480,15 +548,27 @@ function ExecutedExample({scene, zh, frame}) {
 }
 
 function Figure({scene, zh, frame}) {
-  const progress = entrance(frame, 0, Math.min(scene.duration_frames, 160));
+  const progress = entrance(frame, 0, Math.min(scene.duration_frames, 38));
+  const detail = scene.layout === 'detail';
+  const split = scene.layout === 'split';
+  const hasVisualBeats = list(scene.visual_beats).length > 0;
+  const points = list(scene.bullets);
+  const notes = split || !scene.layout ? points : [];
+  const beside = split && (notes.length || hasVisualBeats);
+  const solo = !beside && !notes.length;
+  const scale = detail ? .9 + .05 * progress + .05 * visualCuePulse(scene, frame) : .96 + .04 * progress;
   return (
-    <div className={'pim-figure-layout' + (!scene.bullets?.length ? ' is-solo' : '')}>
-      <Reveal className="pim-figure">
-        <Img src={staticFile(scene.figure_file)} alt={scene.figure_caption || label(zh, '论文原图', 'Original paper figure')}
-          style={{transform: `scale(${.9 + progress * .1})`}} />
+    <div className={'pim-figure-layout' + (solo ? ' is-solo' : '') + (detail ? ' is-detail' : '') +
+      (hasVisualBeats && solo ? ' has-cues' : '')}>
+      <Reveal className="pim-figure" style={{opacity: progress}}>
+        <div className="pim-figure-image">
+          <Img src={staticFile(scene.figure_file)} alt={scene.figure_caption || label(zh, '论文原图', 'Original paper figure')}
+            style={{transform: `scale(${scale})`}} />
+        </div>
         {scene.figure_source && <div className="pim-figure-source">{limit(scene.figure_source, 100)}</div>}
       </Reveal>
-      <TalkingPoint items={scene.bullets} scene={scene} frame={frame} />
+      {hasVisualBeats ? <VisualCues scene={scene} frame={frame} className={solo ? '' : 'is-side'} />
+        : <TalkingPoint items={notes} scene={scene} frame={frame} />}
     </div>
   );
 }
@@ -497,6 +577,9 @@ function Table({scene, zh, frame}) {
   const headers = list(scene.table?.headers).slice(0, 5);
   const rows = list(scene.table?.rows).slice(0, 7);
   if (!headers.length || !rows.length) return <Takeaways scene={scene} zh={zh} frame={frame} />;
+  if (scene.figure_file && rows.some(row => list(row).some(cell => String(cell ?? '').includes('\n')))) {
+    return <Figure scene={scene} zh={zh} frame={frame} />;
+  }
   const starts = stepTimes(scene, rows.length);
   const active = activeStep(scene, frame, rows.length);
   const dense = rows.length > 5 || headers.length > 4;
@@ -514,23 +597,38 @@ function Table({scene, zh, frame}) {
           ))}
         </tbody>
       </table>
+      <VisualCues scene={scene} frame={frame} className="pim-table-cues" />
     </Reveal>
   );
 }
 
 function Takeaways({scene, zh, frame}) {
   const points = list(scene.bullets).filter(item => item?.trim?.());
+  const changes = list(scene.visual_beats);
+  const starts = stepTimes(scene, points.length);
+  const panels = changes.length ? changes.map(beat => ({
+    text: beat.label, start: scene.cues?.[beat.cue]?.start_frame ?? 0,
+  })) : points.map((text, i) => ({text, start: starts[i]}));
+  const grouped = panels.length > 1 && ['sequence', 'recap'].includes(scene.layout);
+  const current = panels.findLastIndex(panel => panel.start <= frame);
   return (
     <div className="pim-takeaways">
-      <TalkingPoint items={points} scene={scene} frame={frame} />
+      {grouped ? <div className={'pim-takeaway-list is-' + scene.layout}>
+        {panels.map(({text, start}, i) => <Reveal key={i} delay={start}
+          className={'pim-takeaway-item' + (i === current ? ' is-active' : '')}>
+          <CaptionText caption={text} />
+        </Reveal>)}
+      </div> : <TalkingPoint items={points} scene={scene} frame={frame} />}
       {scene.formula && <Reveal className="pim-flow-formula" delay={10}><MathExpression text={scene.formula} /></Reveal>}
-      {!points.length && !scene.formula && <TitleArtwork />}
+      {changes.length > 0 && !grouped && <VisualCues scene={scene} frame={frame} />}
+      {!panels.length && !scene.formula && <TitleArtwork />}
     </div>
   );
 }
 
 function Content({scene, zh, frame}) {
   const props = {scene, zh, frame};
+  if (Object.hasOwn(CLIFF_SCENES, scene.visual_demo)) return <CliffSequence variant={scene.visual_demo} {...props} />;
   if (scene.visual_type === 'title') return <Title {...props} />;
   if (scene.visual_type === 'chart' && scene.chart) return <Chart {...props} />;
   if (scene.visual_type === 'table' && scene.table?.rows?.length) return <Table {...props} />;
@@ -554,6 +652,13 @@ function Content({scene, zh, frame}) {
     case 'table': return <Table {...props} />;
     default: return <Takeaways {...props} />;
   }
+}
+
+function CaptionText({caption, paperTitle}) {
+  const parts = useMemo(() => formatCaptionMath(caption, paperTitle), [caption, paperTitle]);
+  return parts.map(({text, html}, index) => html
+    ? <span key={index} className="pim-math" dangerouslySetInnerHTML={{__html: html}} />
+    : text);
 }
 
 function captionAt(scene, frame, fps, zh) {
@@ -638,7 +743,11 @@ function Scene({scene, manifest, index, start, total, previous, visualOnly = fal
       </AbsoluteFill>
       {!visualOnly && caption && (
         <div className="pim-stage" style={{transform: scale}}>
-          <div className="pim-caption-wrap"><span className={'pim-caption' + (caption.length > (zh ? 48 : 125) ? ' is-long' : '')}>{caption}</span></div>
+          <div className="pim-caption-wrap">
+            <span className={'pim-caption' + (caption.length > (zh ? 48 : 125) ? ' is-long' : '')}>
+              <CaptionText caption={caption} paperTitle={manifest.paper_title || manifest.title} />
+            </span>
+          </div>
         </div>
       )}
       {!visualOnly && scene.audio_file && <Audio src={staticFile(scene.audio_file)} playbackRate={scene.audio_playback_rate ?? 1} preservePitch />}

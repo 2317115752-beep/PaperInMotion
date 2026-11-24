@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {formatMath} from '../renderer/math-format.mjs';
+import {formatCaptionMath, formatMath} from '../renderer/math-format.mjs';
 
 test('renders the sample video’s Greek symbol and subscript', () => {
   assert.match(formatMath(String.raw`\Delta y = B(Ax)`), /<mi[^>]*>Δ<\/mi>/);
@@ -20,4 +20,38 @@ test('renders structured TeX inside common delimiters', () => {
 test('falls back on invalid TeX and blocks embedded links', () => {
   assert.equal(formatMath(String.raw`\frac{1}{`), null);
   assert.doesNotMatch(formatMath(String.raw`\href{https://example.com}{x}`), /<a /);
+});
+
+
+test('typesets CLIFF narration with the paper’s subscript and superscript meanings', () => {
+  const title = 'CLIFF: Carrying Location Information in Full Frames into Human Pose and Shape Estimation';
+  const text = '等于tan gamma_X、tan gamma_Y，得到J2D_full，计算L2D_full。';
+  const parts = formatCaptionMath(text, title);
+  assert.equal(parts.map(part => part.text).join(''), text);
+  const maths = parts.filter(part => part.html).map(part => part.html);
+  assert.equal(maths.length, 4);
+  assert.match(maths[0], /<msub><mi>γ<\/mi><mi>X<\/mi><\/msub>/);
+  assert.match(maths[1], /<msub><mi>γ<\/mi><mi>Y<\/mi><\/msub>/);
+  assert.match(maths[2], /<msubsup><mi>J<\/mi>.*<\/msubsup>/);
+  assert.match(maths[3], /<msubsup><mi mathvariant="script">L<\/mi>.*<\/msubsup>/);
+});
+
+test('preserves surrounding prose, corrects Unicode scripts, and typesets delimited math', () => {
+  const parts = formatCaptionMath(String.raw`Start with cᵧ, \(\frac{a_i}{2}\), and $x_{out}^2$，然后结束。`);
+  const maths = parts.filter(part => part.html).map(part => part.html);
+  assert.equal(maths.length, 3);
+  assert.match(maths[0], /<msub><mi>c<\/mi><mi>y<\/mi><\/msub>/);
+  assert.match(maths[1], /<mfrac>.*<msub>/);
+  assert.match(maths[2], /<msubsup><mi>x<\/mi>/);
+  assert.deepEqual(formatCaptionMath('Costs $5 and $10. Use report_v2.txt.'),
+    [{text: 'Costs $5 and $10. Use report_v2.txt.'}]);
+  const broken = String.raw`Keep invalid math \(\frac{1}{\) readable.`;
+  assert.deepEqual(formatCaptionMath(broken), [{text: broken}]);
+});
+
+test('supports upper-case and named scripts without changing file names or code spans', () => {
+  const text = '从 E_{out}、y_hat、W_q 和 Δₜ 到 w_1.npy 或 `x_1`。';
+  const parts = formatCaptionMath(text);
+  assert.equal(parts.map(part => part.text).join(''), text);
+  assert.deepEqual(parts.filter(part => part.html).map(part => part.text), ['E_{out}', 'y_hat', 'W_q', 'Δₜ']);
 });

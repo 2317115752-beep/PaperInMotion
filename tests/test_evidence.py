@@ -8,11 +8,95 @@ import unittest
 from unittest.mock import patch
 
 from backend.pipeline import (
-    build_evidence_excerpts, compile_storyboard, normalize_source_text, run_job, verify_sources,
+    build_evidence_excerpts, compile_storyboard, normalize_source_text, plan_scenes, run_job, verify_sources,
 )
 
 
 class EvidenceSourceTests(unittest.TestCase):
+    def test_generic_visual_beats_follow_bounded_distinct_narration_cues(self):
+        pages = [{'page': 1, 'text': 'The experiment isolates the effect of two independent changes.'}]
+        scene = {'title': '结果解读', 'narration': '交代基线。检查数据。改变第一项。比较结果。'
+                 '控制其它因素。改变第二项。比较输出。说明局限。', 'evidence_ids': ['p1-e1']}
+        labels = ['基线', '数据', '第一项', '初次对照', '控制因素', '第二项', '输出', '局限']
+        plan = {'title': '控制变量', 'scenes': [
+            {**scene, 'visual_beats': [
+                {'cue': index, 'label': f' {labels[index]} '} for index in range(7, -1, -1)
+            ]},
+            {**scene, 'visual_beats': [
+                {'cue': 4, 'label': '控制因素'},
+                {'cue': 4, 'label': '重复时间'},
+                {'cue': 2, 'label': '第一项'},
+                {'cue': 8, 'label': '旁白中没有此句'},
+                {'cue': True, 'label': '错误类型'},
+                {'cue': 1, 'label': ' '},
+                {'cue': -1, 'label': '错误序号'},
+                {'cue': 0, 'label': '长' * 57},
+            ]},
+            {**scene, 'visual_beats': {'cue': 1, 'label': '错误容器'}},
+        ]}
+        scenes = compile_storyboard(plan, None, pages, 'zh')['scenes']
+        self.assertEqual(scenes[0]['visual_beats'], [
+            {'cue': index, 'label': label} for index, label in enumerate(labels[:6])
+        ])
+        self.assertEqual(scenes[1]['visual_beats'], [
+            {'cue': 2, 'label': '第一项'}, {'cue': 4, 'label': '控制因素'},
+        ])
+        self.assertNotIn('visual_beats', scenes[2])
+
+    def test_cliff_demonstrations_require_the_source_paper_and_compatible_scenes(self):
+        pages = [{'page': 1, 'text': 'CLIFF: Carrying Location Information in Full Frames into Human\n'
+                  'Pose and Shape Estimation. Cropped person images are encoded as appearance features.'}]
+        scene = {'title': 'Follow the pose estimation pipeline', 'narration': 'First encode the crop.',
+                 'visual_type': 'flow', 'evidence_ids': ['p1-e1']}
+        raw = {'title': 'Pose estimation', 'scenes': [
+            {**scene, 'visual_demo': 'crop-encode'},
+            {**scene, 'visual_demo': 'crop-encode'},
+            {**scene, 'visual_demo': 'reprojection', 'visual_type': 'title'},
+            {**scene, 'visual_demo': 'unknown-demo'},
+        ]}
+        other_paper = [{'page': 1, 'text': 'Image features are estimated from the input image.'},
+                       {'page': 2, 'text': pages[0]['text']}]
+        with patch('backend.pipeline.chat_json', return_value=raw) as model:
+            scenes = plan_scenes({}, None, 'en', 60, pages)['scenes']
+            self.assertIn('crop-encode', model.call_args.args[0])
+            self.assertEqual(scenes[0]['visual_demo'], 'crop-encode')
+            self.assertTrue(all('visual_demo' not in item for item in scenes[1:]))
+
+            scenes = plan_scenes({}, None, 'en', 60, other_paper)['scenes']
+            self.assertNotIn('crop-encode', model.call_args.args[0])
+            self.assertTrue(all('visual_demo' not in item for item in scenes))
+
+    def test_scene_layouts_vary_repeated_visuals_after_compilation(self):
+        figure = {'id': 'p1-figure1', 'kind': 'figure', 'file': 'assets/p1-figure1.png',
+                  'caption': 'Figure 1. A sequence of inputs and outputs'}
+        pages = [{'page': 1, 'text': 'The figure documents the inputs and outputs of each operation.',
+                  'assets': [figure]}]
+        scene = {'title': 'Follow the method', 'narration': 'Start with the input. Track the output.',
+                 'evidence_ids': ['p1-e1']}
+        figure_scene = {**scene, 'visual_type': 'figure', 'visual_id': figure['id']}
+        plan = {'title': 'Inputs and outputs', 'scenes': [
+            {**scene, 'visual_type': 'flow', 'layout': ' BRANCH '},
+            {**scene, 'visual_type': 'flow', 'layout': 'branch'},
+            {**scene, 'visual_type': 'matrix', 'layout': {'unknown': 'shape'}},
+            {**scene, 'visual_type': 'bullets', 'nodes': ['Input', 'Output'], 'layout': 'recap'},
+            {**scene, 'visual_type': 'flow', 'layout': 'alternating'},
+            {**figure_scene, 'layout': 'detail'},
+            {**figure_scene, 'layout': 'detail'},
+            {**figure_scene, 'layout': 'split'},
+            {**figure_scene, 'visual_id': 'missing', 'layout': 'full'},
+            {**scene, 'visual_type': 'result', 'layout': 'spotlight'},
+            {**scene, 'visual_type': 'equation', 'layout': 'callout', 'formula': 'y = x'},
+            {**scene, 'visual_type': 'equation', 'layout': 'callout', 'formula': 'x = y'},
+        ]}
+        compiled = compile_storyboard(plan, None, pages)['scenes']
+        self.assertEqual([item['layout'] for item in compiled], [
+            'branch', 'route', 'stack', 'alternating', 'route',
+            'detail', 'full', 'split', 'spotlight', 'sequence', 'callout', 'derive',
+        ])
+        self.assertEqual([item['figure_path'] for item in compiled[5:8]], [figure['file']] * 3)
+        self.assertEqual(compiled[8]['visual_type'], 'bullets')
+        self.assertNotIn('figure_path', compiled[8])
+
     def test_storyboard_preserves_supplement_page_and_checks_reference_ids(self):
         pages = [{'page': 102, 'physical_page': 2, 'document': 'Supplement 1',
                   'text': 'The supplement documents the training ablation and its settings.'}]
@@ -42,6 +126,7 @@ class EvidenceSourceTests(unittest.TestCase):
         self.assertIn('baseline result is 1, 2', first['narration'])
         self.assertIn('proposed method gives 9, -2', first['narration'])
         self.assertEqual(first['visual_type'], 'matrix')
+        self.assertNotIn('layout', first)
         self.assertEqual([item['visual_type'] for item in scenes], ['matrix', 'flow', 'equation'])
         self.assertTrue(all('example' not in item for item in scenes[1:]))
         chart = first['chart']
@@ -82,6 +167,7 @@ class EvidenceSourceTests(unittest.TestCase):
         raw = {'title': 'Benchmark', 'scenes': [scene, {**scene, 'evidence_ids': ['p1-e1']}, scene]}
         compiled = compile_storyboard(raw, None, pages)['scenes']
         self.assertEqual(compiled[0]['visual_type'], 'chart')
+        self.assertNotIn('layout', compiled[0])
         self.assertEqual(compiled[0]['chart'], {
             'kind': 'bar', 'title': 'Accuracy', 'unit': '%',
             'source_label': 'Supplement 1 · p. 2 · Table 4',

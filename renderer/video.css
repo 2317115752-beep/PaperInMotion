@@ -550,6 +550,31 @@
   object-fit: contain;
 }
 
+.pim-figure-image {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+}
+
+.pim-figure-layout.is-detail .pim-figure {
+  padding: 18px 30px 50px;
+  border-radius: 3px;
+  border-left: 6px solid var(--accent);
+}
+
+.pim-figure-layout.has-cues {
+  gap: 18px;
+}
+
+.pim-figure-layout.has-cues .pim-figure {
+  height: 447px;
+}
+
+.pim-figure-layout .pim-visual-cues.is-side {
+  grid-auto-flow: row;
+  grid-auto-columns: auto;
+}
+
 .pim-figure-source {
   position: absolute;
   left: 26px;
@@ -902,6 +927,201 @@
 .pim-caption.is-long {
   font-size: 29px;
   padding: 10px 24px;
+}
+
+.pim-shaped-flow {
+  display: grid;
+  gap: 16px 36px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pim-shaped-flow-body {
+  display: grid;
+  min-width: 0;
+}
+
+.pim-shaped-flow li {
+  display: flex;
+  align-items: center;
+  min-height: 66px;
+  padding: 16px 25px;
+  border-left: 5px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 32px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+  transform: translateX(calc(24px * (1 - var(--arrival))));
+}
+
+.pim-shaped-flow li.is-active {
+  border-color: var(--warm);
+  background: var(--accentPale);
+  color: var(--ink);
+}
+
+.pim-flow-layout--stack .pim-shaped-flow-body {
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+  gap: 70px;
+  align-items: stretch;
+}
+
+.pim-stack-focus {
+  display: grid;
+  align-items: center;
+  grid-template-columns: 6px minmax(0, 1fr);
+  gap: 28px;
+  color: var(--accent);
+}
+
+.pim-stack-progress {
+  height: 100%;
+  background: var(--line);
+}
+
+.pim-stack-progress span {
+  display: block;
+  width: 100%;
+  background: var(--warm);
+}
+
+.pim-stack-label {
+  font-size: 60px;
+  font-weight: 720;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.pim-flow-layout--branch .pim-shaped-flow {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(1350px, 100%);
+  align-items: stretch;
+  justify-self: center;
+}
+
+.pim-flow-layout--branch li:first-child {
+  grid-column: 1 / -1;
+  justify-content: center;
+  border-left: 0;
+  border-bottom: 5px solid var(--accent);
+}
+
+.pim-flow-layout--alternating .pim-shaped-flow {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(1410px, 100%);
+  position: relative;
+  justify-self: center;
+}
+
+.pim-flow-layout--alternating li {
+  grid-row: var(--step);
+}
+
+.pim-flow-layout--alternating li:nth-child(odd) {
+  grid-column: 1;
+  border-left: 0;
+  border-right: 5px solid var(--accent);
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.pim-flow-layout--alternating li:nth-child(even) {
+  grid-column: 2;
+}
+
+.pim-equation-callout {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+  gap: 22px;
+}
+
+.pim-equation-callout .pim-equation-panel {
+  max-width: 100%;
+  text-align: center;
+}
+
+.pim-equation-callout .pim-equation {
+  border-left: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 66px;
+}
+
+.pim-takeaway-list {
+  display: grid;
+  gap: 20px;
+}
+
+.pim-takeaway-list.is-recap {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pim-takeaway-item {
+  padding: 20px 30px;
+  min-height: 94px;
+  border-top: 3px solid var(--accent);
+  background: var(--surface);
+  font-size: 38px;
+  line-height: 1.18;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.pim-takeaway-item.is-active {
+  border-color: var(--warm);
+  background: var(--accentPale);
+}
+
+.pim-takeaway-list.is-sequence {
+  max-width: 1160px;
+}
+
+.pim-takeaway-list.is-sequence .pim-takeaway-item {
+  min-height: 0;
+  padding-block: 12px;
+  border-top: 0;
+  border-left: 4px solid var(--accent);
+}
+
+.pim-visual-cues {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 10px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.pim-visual-cues.is-dense {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.pim-visual-cues li {
+  min-width: 0;
+  border-top: 4px solid var(--line);
+  padding: 11px 14px 0;
+  color: var(--muted);
+  font-size: 26px;
+  line-height: 1.18;
+  font-weight: 630;
+  overflow-wrap: anywhere;
+}
+
+.pim-visual-cues li.is-current {
+  border-color: var(--warm);
+  color: var(--ink);
+}
+
+.pim-table-cues {
+  margin-top: 18px;
+}
+
+.pim-comparison-cues {
+  grid-column: 1 / -1;
 }
 
 .pim-flow-formula sub, .pim-flow-formula sup,

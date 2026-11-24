@@ -164,6 +164,52 @@ def schedule_beats(scene):
         beats.append({'label': label, 'start_frame': frame})
     return beats
 
+SRT_GREEK = {
+    'alpha': 'α', 'beta': 'β', 'gamma': 'γ', 'delta': 'δ', 'epsilon': 'ϵ',
+    'varepsilon': 'ε', 'zeta': 'ζ', 'eta': 'η', 'theta': 'θ', 'vartheta': 'ϑ',
+    'iota': 'ι', 'kappa': 'κ', 'lambda': 'λ', 'mu': 'μ', 'nu': 'ν', 'xi': 'ξ',
+    'pi': 'π', 'varpi': 'ϖ', 'rho': 'ρ', 'sigma': 'σ', 'tau': 'τ', 'upsilon': 'υ',
+    'phi': 'ϕ', 'varphi': 'φ', 'chi': 'χ', 'psi': 'ψ', 'omega': 'ω',
+    'Gamma': 'Γ', 'Delta': 'Δ', 'Theta': 'Θ', 'Lambda': 'Λ', 'Xi': 'Ξ',
+    'Pi': 'Π', 'Sigma': 'Σ', 'Upsilon': 'Υ', 'Phi': 'Φ', 'Psi': 'Ψ', 'Omega': 'Ω',
+}
+SRT_DIGITS = {
+    '_': str.maketrans('0123456789+-=', '₀₁₂₃₄₅₆₇₈₉₊₋₌'),
+    '^': str.maketrans('0123456789+-=', '⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼'),
+}
+SRT_INLINE_MATH = re.compile(
+    r'\\\(([^\n]*?)\\\)|\\\[([^\n]*?)\\\]|(?<![\\$])\$\$([^\n$]+)\$\$'
+    r'|(?<![\\$])\$(?!\s)([^\n$]+)\$(?![\d$])'
+)
+SRT_SCRIPT = r'([_^])(?:\{([A-Za-z0-9+\-=]+)\}|([A-Za-z0-9]+))'
+SRT_SYMBOL = re.compile(
+    r'(?<![\\A-Za-z0-9_])(?P<base>\\?(?:' + '|'.join(SRT_GREEK)
+    + r')|[A-Za-zͰ-Ͽ])(?P<scripts>(?:' + SRT_SCRIPT + r')+)(?![A-Za-z0-9_]|\.[A-Za-z0-9])'
+)
+SRT_FULL_FRAME = re.compile(r'(?<![A-Za-z0-9_])([JL])2D_(full|crop)(?![A-Za-z0-9_]|\.[A-Za-z0-9])')
+
+
+def srt_notation(text):
+    # SRT uses plain text, so keep scripts without Unicode equivalents explicitly grouped.
+    def script(match):
+        operator, braced, bare = match.groups()
+        value = braced or bare
+        if re.fullmatch(r'[0-9+\-=]+', value):
+            return value.translate(SRT_DIGITS[operator])
+        return operator + (f'({value})' if braced or len(value) > 1 else value)
+
+    def symbol(match):
+        base, scripts = match.group('base', 'scripts')
+        return SRT_GREEK.get(base.lstrip('\\'), base) + re.sub(SRT_SCRIPT, script, scripts)
+
+    def plain_math(caption):
+        caption = SRT_INLINE_MATH.sub(lambda match: next(group for group in match.groups() if group is not None), caption)
+        caption = SRT_FULL_FRAME.sub(r'\1_(2D)^(\2)', caption)
+        return SRT_SYMBOL.sub(symbol, caption)
+
+    parts = re.split(r'(\x60[^\x60\n]+\x60)', text)
+    return ''.join(part if index % 2 else plain_math(part) for index, part in enumerate(parts))
+
 
 def dump_srt(path, scenes, language):
     def timestamp(frames):
@@ -181,6 +227,7 @@ def dump_srt(path, scenes, language):
             cues = estimated_cues(scene['narration'], frames, language)
         for cue in cues:
             start, end = (timestamp(offset+cue[key]) for key in ('start_frame', 'end_frame'))
-            blocks.append(f"{len(blocks)+1}\n{start} --> {end}\n{cue['text']}\n")
+            text = srt_notation(cue['text'])
+            blocks.append(f"{len(blocks)+1}\n{start} --> {end}\n{text}\n")
         offset += scene['duration_frames']
     Path(path).write_text('\n'.join(blocks), encoding='utf-8')

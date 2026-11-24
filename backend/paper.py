@@ -5,6 +5,10 @@ import re
 import pymupdf as fitz
 
 CAPTION = re.compile(r'^\s*(?:fig(?:ure)?\.?|table)\s*\d+\b|^\s*[图表]\s*\d+', re.I)
+TABLE_CAPTION = re.compile(
+    r'^\s*table\s*\d+\b(?!\s+(?:compares|shows|presents|illustrates|reports|lists|provides|summarizes)\b)'
+    r'|^\s*表\s*\d+', re.I,
+)
 EQUATION = re.compile(r'(?:[=≈≤≥∑∫])')
 MAX_ASSETS = 12
 
@@ -14,46 +18,156 @@ def save_crop(page, rect, path, max_size=1500):
     page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=rect, alpha=False).save(str(path))
 
 
+def caption_column(bounds, label):
+    midpoint = bounds.x0 + bounds.width * .5
+    margin = bounds.width * .035
+    left, right = bounds.x0 + margin, bounds.x1 - margin
+    if label.width < bounds.width * .49:
+        if label.x0 >= midpoint - bounds.width * .02:
+            left = min(label.x0, midpoint)
+        elif label.x1 < midpoint + bounds.width * .04:
+            right = max(label.x1, midpoint + bounds.width * .01)
+    return left, right
+
+
+def figure_crop(bounds, label, text_blocks, image_rects, drawing_rects):
+    left, right = caption_column(bounds, label)
+    column_width = right - left
+    preceding = [
+        rect.y1 for rect, text in text_blocks
+        if rect.y1 <= label.y0 and rect.x1 > label.x0 and rect.x0 < label.x1
+        and (CAPTION.match(text) or (len(text) >= 100 and rect.width >= column_width * .32)
+             or (rect.y1 < bounds.y0 + bounds.height * .14 and rect.height < 15
+                 and re.search(r'^(?:\d{1,3}\s+)|(?:\s+\d{1,3})$', text)))
+    ]
+    top = max([bounds.y0, label.y0 - bounds.height * .67] + preceding)
+    images = [rect for rect in image_rects if rect.y0 >= top and rect.y1 <= label.y0 + 1]
+    anchors = [
+        rect for rect in images if rect.width >= 55 and rect.height >= 40
+        and label.y0 - rect.y1 <= 145 and rect.x1 > label.x0 and rect.x0 < label.x1
+    ]
+    # The caption limits neighboring panels. An aligned full-width image may itself
+    # extend beyond that footprint when the caption is only one line long.
+    left = min([left] + [rect.x0 for rect in anchors])
+    right = max([right] + [rect.x1 for rect in anchors])
+    components = [
+        rect for rect in images + drawing_rects
+        if rect.y0 >= top and rect.y1 <= label.y0 + 1 and rect.x0 >= left - 4 and rect.x1 <= right + 4
+    ]
+    if not anchors and components:
+        anchor = max(components, key=lambda rect: rect.y1)
+        if label.y0 - anchor.y1 <= 75:
+            anchors = [anchor]
+    if anchors:
+        crop = fitz.Rect(max(anchors, key=lambda rect: rect.y1))
+        gap = 35
+        while True:
+            vicinity = crop + (-gap, -gap, gap, gap)
+            expanded = fitz.Rect(crop)
+            for part in components:
+                if vicinity.intersects(part):
+                    expanded.include_rect(part)
+            if expanded == crop:
+                break
+            crop = expanded
+        if crop.width >= 55 and crop.height >= 40:
+            # Keep short panel labels beside a graphic while excluding prose and captions.
+            label_area = crop + (-12, -9, 12, 20)
+            for rect, text in text_blocks:
+                if (top <= rect.y0 and rect.y1 < label.y0 and len(text) < 100
+                        and not CAPTION.match(text) and rect.x0 >= left and rect.x1 <= right
+                        and (rect.width < column_width * .4 or (rect.height <= 24
+                            and rect.x0 >= crop.x0 - 5 and rect.x1 <= crop.x1 + 5))
+                        and label_area.intersects(rect)):
+                    crop.include_rect(rect)
+            return (crop + (-2, -2, 2, 2)) & fitz.Rect(left - 4, top, right + 4, label.y0 - 1)
+
+    # Captions next to figures drawn as text can still use the intervening column.
+    return fitz.Rect(left, max(top, label.y0 - 220) + 3, right, label.y0 - 2)
+
+
+def horizontal_overlap(first, second):
+    return min(first.x1, second.x1) - max(first.x0, second.x0)
+
+
+def aligned_columns(first, second):
+    return horizontal_overlap(first, second) >= min(first.width, second.width) * .6
+
+
+def vertical_gap(first, second):
+    return max(first.y0 - second.y1, second.y0 - first.y1)
+
+
+def match_tables(tables, captions, bounds):
+    pairs = []
+    candidates = []
+    for table in tables:
+        rect = fitz.Rect(table.bbox) & bounds
+        if rect.width < 55 or rect.height < 40 or rect.get_area() > bounds.get_area() * .85:
+            continue
+        cells = table.extract()
+        if sum(sum(bool(cell and cell.strip()) for cell in row) >= 2 for row in cells) >= 2:
+            candidates.append((rect, cells))
+    for label_index, (label, caption) in enumerate(captions):
+        if not TABLE_CAPTION.match(caption):
+            continue
+        for table_index, (rect, _cells) in enumerate(candidates):
+            if not aligned_columns(rect, label):
+                continue
+            gap = vertical_gap(rect, label)
+            if not -2 <= gap <= 60:
+                continue
+            between_top = min(rect.y1, label.y1)
+            between_bottom = max(rect.y0, label.y0)
+            if any(between_top <= other.y0 and other.y1 <= between_bottom
+                   and aligned_columns(rect, other)
+                   for other, _ in captions):
+                continue
+            if any(not TABLE_CAPTION.match(text) and aligned_columns(rect, other)
+                   and vertical_gap(rect, other) < gap
+                   for other, text in captions):
+                continue
+            center_offset = abs(rect.x0 + rect.x1 - label.x0 - label.x1)
+            pairs.append((max(0, gap), center_offset, label_index, table_index))
+    matches, used_tables = {}, set()
+    # Pair the closest edges first and only assign each grid once.
+    for _, _, label_index, table_index in sorted(pairs):
+        if label_index not in matches and table_index not in used_tables:
+            matches[label_index] = candidates[table_index]
+            used_tables.add(table_index)
+    return matches
+
+
 def extract_assets(page, number, folder, remaining):
     if remaining <= 0:
         return []
     bounds = page.rect
-    blocks = page.get_text('blocks', sort=True)
-    image_rects = [fitz.Rect(item['bbox']) for item in page.get_image_info()
-                   if (item['bbox'][2] - item['bbox'][0]) >= 55 and (item['bbox'][3] - item['bbox'][1]) >= 45]
+    text_blocks = [(fitz.Rect(block[:4]), ' '.join(block[4].split()))
+                   for block in page.get_text('blocks', sort=True) if block[6] == 0]
+    captions = [(label, text) for label, text in text_blocks
+                if CAPTION.match(text) and len(text) <= 550 and label.width >= 35
+                and (not text.lower().startswith(('table', '表')) or TABLE_CAPTION.match(text))]
+    has_tables = any(TABLE_CAPTION.match(text) for _, text in captions)
+    table_matches = match_tables(page.find_tables().tables, captions, bounds) if has_tables else {}
+    image_rects = []
+    drawing_rects = []
+    graphics_loaded = False
     assets = []
-    for block in blocks:
-        caption = ' '.join(block[4].split())
-        if not CAPTION.match(caption):
-            continue
-        label = fitz.Rect(block[:4])
-        if len(caption) > 550 or label.width < 35:
-            continue
-        is_table = caption.lower().startswith(('table', '表'))
+    for index, (label, caption) in enumerate(captions):
+        is_table = bool(TABLE_CAPTION.match(caption))
         if not is_table:
-            nearby = [r for r in image_rects if abs(r.y1 - label.y0) < 145 and r.x1 > label.x0 and r.x0 < label.x1]
-            if nearby:
-                rect = fitz.Rect(nearby[0])
-                for part in nearby[1:]:
-                    rect.include_rect(part)
-            else:
-                preceding = [fitz.Rect(b[:4]) for b in blocks if fitz.Rect(b[:4]).y1 < label.y0 - 30
-                             and fitz.Rect(b[:4]).x1 > label.x0 and fitz.Rect(b[:4]).x0 < label.x1]
-                top = max([b.y1 for b in preceding] + [label.y0 - 220])
-                margins = (.035 * bounds.width, bounds.width * .035)
-                # Preserve the whole column even when the caption occupies only one short line.
-                single_column = label.width < bounds.width * .49 and (
-                    label.x0 >= bounds.width * .48 or label.x1 < bounds.width * .54)
-                left = bounds.width * .5 if single_column and label.x0 >= bounds.width * .48 else margins[0]
-                right = (bounds.width * .51 if single_column and left == margins[0] else bounds.width - margins[1])
-                rect = fitz.Rect(left, max(bounds.y0, top + 3), right, label.y0 - 2)
+            if not graphics_loaded:
+                image_rects = [fitz.Rect(item['bbox']) for item in page.get_image_info()]
+                image_rects = [rect for rect in image_rects if rect.width >= 8 and rect.height >= 6]
+                drawing_rects = [item['rect'] for item in page.get_drawings(extended=False)]
+                # Horizontal or vertical connectors can have zero area in a PDF.
+                drawing_rects = [rect + (-1, -1, 1, 1) for rect in drawing_rects if max(rect.width, rect.height) >= 8]
+                graphics_loaded = True
+            rect = figure_crop(bounds, label, text_blocks, image_rects, drawing_rects)
         else:
-            table_candidates = [table for table in page.find_tables().tables
-                                if abs(table.bbox[1] - label.y1) < 150]
-            if not table_candidates:
+            if index not in table_matches:
                 continue
-            table = min(table_candidates, key=lambda item: abs(item.bbox[1] - label.y1))
-            rect = fitz.Rect(table.bbox)
+            rect, cells = table_matches[index]
         rect = rect & bounds
         if rect.width < 55 or rect.height < 40 or rect.get_area() > bounds.get_area() * .85:
             continue
@@ -63,7 +177,6 @@ def extract_assets(page, number, folder, remaining):
         save_crop(page, rect, folder/filename)
         asset = {'id': visual_id, 'kind': kind, 'caption': caption, 'bbox': list(rect), 'file': filename}
         if is_table:
-            cells = table.extract()
             if 2 <= len(cells) <= 10 and 2 <= len(cells[0]) <= 5:
                 asset['table'] = {'headers': [str(cell or '')[:50] for cell in cells[0]],
                                   'rows': [[str(cell or '')[:65] for cell in row] for row in cells[1:]]}

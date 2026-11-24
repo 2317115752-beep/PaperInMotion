@@ -1,5 +1,6 @@
 """Evidence-linked reading, executed examples, storyboarding, speech and rendering."""
 from __future__ import annotations
+from collections import Counter
 import json
 import math
 import os
@@ -22,6 +23,23 @@ from .timing import (
 
 ROOT = Path(__file__).resolve().parent.parent
 DURATION_SCENES = {60: 4, 120: 6, 180: 8, 300: 12}
+SUMMARY_LAYOUTS = ('spotlight', 'sequence', 'recap')
+SCENE_LAYOUTS = {
+    'flow': ('route', 'stack', 'branch', 'alternating'),
+    'figure': ('full', 'split', 'detail'),
+    'equation': ('derive', 'callout'),
+    'bullets': SUMMARY_LAYOUTS,
+    'result': SUMMARY_LAYOUTS,
+}
+CLIFF_VISUAL_DEMOS = {
+    'crop-encode': 'encode the cropped person image as appearance features',
+    'box-fusion': 'normalize the full-frame box geometry and join it with appearance features',
+    'parameter-branches': 'regress SMPL pose and shape and the local camera parameters',
+    'translate-full': 'convert crop-relative camera translation to full-image coordinates',
+    'reprojection': 'project 3D joints into the full frame and compare them with 2D targets',
+}
+MAX_VISUAL_BEATS = 6
+MAX_VISUAL_BEAT_LABEL = 56
 
 
 def save_json(path, obj):
@@ -35,10 +53,41 @@ class EquationStep(BaseModel):
     label: str | None = Field(default=None, max_length=56)
 
 
+class VisualBeat(BaseModel):
+    cue: int = Field(ge=0, strict=True)
+    label: str = Field(min_length=1, max_length=MAX_VISUAL_BEAT_LABEL)
+
+
+def valid_visual_beats(value, cue_count=None):
+    if not isinstance(value, list):
+        return []
+    by_cue = {}
+    for beat in value:
+        if not isinstance(beat, dict):
+            continue
+        cue, label = beat.get('cue'), beat.get('label')
+        if type(cue) is not int or cue < 0 or (cue_count is not None and cue >= cue_count):
+            continue
+        if not isinstance(label, str):
+            continue
+        label = ' '.join(label.split())
+        if 0 < len(label) <= MAX_VISUAL_BEAT_LABEL:
+            by_cue.setdefault(cue, label)
+    return [{'cue': cue, 'label': by_cue[cue]} for cue in sorted(by_cue)[:MAX_VISUAL_BEATS]]
+
+
+def keep_visual_beats(scene, cue_count):
+    beats = valid_visual_beats(scene.pop('visual_beats', None), cue_count)
+    if beats:
+        scene['visual_beats'] = beats
+
+
 class Scene(BaseModel):
     title: str = Field(min_length=1, max_length=90)
     narration: str = Field(min_length=1, max_length=2200)
     visual_type: Literal['title', 'bullets', 'flow', 'comparison', 'equation', 'matrix', 'result', 'figure', 'table', 'chart'] = 'bullets'
+    layout: str | None = None
+    visual_demo: str | None = None
     bullets: list[str] = Field(default_factory=list, max_length=4)
     source_pages: list[int] = Field(default_factory=list, max_length=6)
     formula: str = Field(default='', max_length=180)
@@ -50,8 +99,19 @@ class Scene(BaseModel):
     chart_column: int | None = Field(default=None, ge=1, le=4)
     beat_labels: list[str] = Field(default_factory=list, max_length=6)
     beat_cues: list[int] = Field(default_factory=list, max_length=6)
+    visual_beats: list[VisualBeat] = Field(default_factory=list, max_length=MAX_VISUAL_BEATS)
     focus_cue: int | None = None
     comparison: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator('layout', 'visual_demo', mode='before')
+    @classmethod
+    def optional_visual_option(cls, value):
+        return value.strip().lower() if isinstance(value, str) else None
+
+    @field_validator('visual_beats', mode='before')
+    @classmethod
+    def optional_visual_beats(cls, value):
+        return valid_visual_beats(value)
 
     @field_validator('focus_cue', mode='before')
     @classmethod
@@ -200,7 +260,14 @@ def storyboard_prompt(language, duration, level):
     Design this as a visual lesson, not a slide deck: show changing states, connected diagrams, animated equations,
     bar charts, or source figures as the narration explains them. Vary visual types across adjacent scenes and
     choose a single main visual per scene. Make one visible change when the narration introduces a new state,
-    result, or comparison. Prefer extracted figures and tables when relevant. When a table has a comparable numeric column,
+    result, or comparison. Choose a layout matched to the teaching purpose. Use different layouts when the
+    same visual type appears again, especially when reusing a source figure:
+    - flow: route for a linear path, stack for vertically staged operations, branch for related outputs,
+      or alternating for a zigzag sequence. Preserve the order of the operations in nodes.
+    - figure: full for an overview, split if labels guide the reading, or detail for closer inspection.
+    - equation: derive for worked steps or callout for a single focal expression.
+    - bullets or result: spotlight for a main finding, sequence for several related points, or recap for synthesis.
+    Prefer extracted figures and tables when relevant. When a table has a comparable numeric column,
     include one chart scene using that table's visual_id and a chart_column index listed in chart_columns.
     chart_column=1 means the first metric column immediately after the leftmost row-label column.
     The application supplies every plotted value directly from the extracted table. Cite evidence from the same
@@ -211,6 +278,13 @@ def storyboard_prompt(language, duration, level):
     diagram or equation. Without computed states, use labeled qualitative comparisons or diagrams.
     For timed demonstrations specify beat_labels as 2–5 short variable/state/operation names in order, and
     matching zero-based beat_cues indices when narration sentence cues are clear.
+    For long scenes that would hold one static image, formula or summary, give visual_beats for 2–4 visual
+    changes across the narration. Each has a distinct zero-based sentence cue and a short {locale} label
+    naming the content the viewer will see. Write the actual displayed phrases, for example "Identity shortcut"
+    or "ResNet-152 accuracy". Do not write production directions in the label. Distribute the beats from the
+    explanation's beginning through its conclusion. Use facts supported by the scene's source or computed
+    example, and never invent relationships, figure regions, or measurements. Omit visual_beats if existing
+    diagrams, chart highlights, or derivation steps already cover those changes.
     On selected title, figure, matrix, or equation scenes, use focus_cue for a gentle camera push when one
     narration sentence introduces a visual detail that benefits from a closer look. Omit it elsewhere.
     For formula fields, write one KaTeX-compatible LaTeX expression without surrounding math delimiters.
@@ -218,10 +292,11 @@ def storyboard_prompt(language, duration, level):
     an optional short label per step. Add a beat label and narration cue for each step. Use a single formula
     and omit equations when the source and computed example do not support a derivation. Return JSON only.
     {{"title":"short title","scenes":[{{"title":"short title","narration":"plain spoken text, no Markdown",
-    "visual_type":"title|bullets|flow|comparison|equation|matrix|figure|table|chart|result","bullets":["short labels"],
+    "visual_type":"title|bullets|flow|comparison|equation|matrix|figure|table|chart|result","layout":"compatible layout","bullets":["short labels"],
     "evidence_ids":["p1-e1"],"formula":"one math expression","nodes":["input","step","output"],
     "equations":[{{"label":"short step label","expression":"one math expression"}}],
     "visual_id":"","chart_column":1,"beat_labels":[],"beat_cues":[],"focus_cue":1,
+    "visual_beats":[{{"cue":1,"label":"short visible detail"}}],
     "comparison":{{"baseline":"...","proposed":"..."}},
     "use_example":false}}]}}. Omit unused optional fields. Titles under 52 characters in English or 28 in Chinese."""
 
@@ -337,6 +412,31 @@ def describe_example_outputs(example, language):
     return f'In this example, the baseline result is {baseline}. The proposed method gives {proposed}.'
 
 
+def assign_scene_layouts(scenes):
+    layout_uses = Counter()
+    previous_layouts = {}
+    for scene in scenes:
+        preferred = scene.pop('layout', None)
+        choices = SCENE_LAYOUTS.get(scene['visual_type'])
+        if not choices:
+            continue
+        previous = previous_layouts.get(choices)
+        # Keep the model's compatible choice when it offers as much variety as the alternatives.
+        layout = min(choices, key=lambda option: (layout_uses[option], option == previous, option != preferred))
+        scene['layout'] = layout
+        layout_uses[layout] += 1
+        previous_layouts[choices] = layout
+
+
+def is_cliff_paper(pages):
+    first_page = next((page for page in pages if page['page'] == 1), {})
+    text = normalize_source_text(first_page.get('text', '')[:600]).casefold()
+    return bool(re.search(
+        r'\bcliff\s*:\s*carrying location information in full frames into human pose and shape estimation\b',
+        text,
+    ))
+
+
 def compile_storyboard(raw, example, pages, language='en'):
     result = Storyboard.model_validate(raw).model_dump()
     evidence = {item['id']: item for item in build_evidence_excerpts(pages)}
@@ -350,11 +450,14 @@ def compile_storyboard(raw, example, pages, language='en'):
             raise ValueError('The storyboard omitted the executed example. Revise the storyboard to explain its states.')
     assets = visible_assets(pages)
     used_assets = set()
+    available_demos = set(CLIFF_VISUAL_DEMOS) if is_cliff_paper(pages) else set()
     for i, scene in enumerate(result['scenes'], 1):
         scene['id'] = f'scene-{i}'
         scene['bullets'] = [b[:100] for b in scene['bullets']]
         scene['nodes'] = [n[:55] for n in scene['nodes']]
         scene['beat_labels'] = [n[:55] for n in scene['beat_labels']]
+        cue_count = len(narration_segments(scene['narration'], language)) if scene['visual_beats'] else 0
+        keep_visual_beats(scene, cue_count)
         scene['comparison'] = {k: scene['comparison'][k][:140] for k in ('baseline', 'proposed')
                                if k in scene['comparison']}
         selected = [evidence[key] for key in dict.fromkeys(scene.pop('evidence_ids')) if key in evidence]
@@ -404,17 +507,31 @@ def compile_storyboard(raw, example, pages, language='en'):
             scene['visual_type'] = 'flow'
         if scene['visual_type'] != 'equation' or not scene['equations']:
             scene.pop('equations')
+        demo = scene.pop('visual_demo')
+        if (demo in available_demos and scene['visual_type'] in ('flow', 'equation')
+                and not scene.get('figure_path')):
+            scene['visual_demo'] = demo
+            available_demos.remove(demo)
         focus_cue = scene['focus_cue']
         if (focus_cue is None or scene['visual_type'] not in ('title', 'figure', 'matrix', 'equation')
                 or focus_cue >= len(narration_segments(scene['narration'], language))):
             scene.pop('focus_cue')
     assign_example_chart(result['scenes'], example, language)
+    assign_scene_layouts(result['scenes'])
     return result
 
 
 def plan_scenes(method, example, language, duration, pages, *, diagnostics_path=None,
                 level='introductory', condition='C', images=(), feedback=''):
     prompt = storyboard_prompt(language, duration, level)
+    if is_cliff_paper(pages):
+        demos = '\n'.join(f'- {key}: {description}' for key, description in CLIFF_VISUAL_DEMOS.items())
+        prompt += (
+            '\nThis paper has optional visual demonstrations. Set "visual_demo" to one identifier below '
+            'in a flow or equation scene when its cited source explains the matching operation. '
+            'Use each identifier at most once. Align beat_labels and beat_cues to the states you explain. '
+            'Use the regular visual plan for figures, tables, charts and the executed example.\n' + demos
+        )
     if feedback:
         prompt += '\nReviewer feedback to check against the evidence: ' + feedback
     if condition == 'A':
@@ -675,11 +792,13 @@ def run_job(job, folder, update):
     elif stage == 'production':
         method = json.loads((folder/'method.json').read_text(encoding='utf-8'))
         storyboard = json.loads((folder/'storyboard-plan.json').read_text(encoding='utf-8'))
+        assign_scene_layouts(storyboard['scenes'])
         for key, narration in revision.get('narrations', {}).items():
             scene = storyboard['scenes'][int(key)-1]
             scene['narration'] = narration
             scene['beat_cues'] = []
             scene.pop('focus_cue', None)
+            scene.pop('visual_beats', None)
         update(stage='storyboard', progress=49, message='Reusing verified method and storyboard')
     else:
         update(stage='reading', progress=5, message='Extracting PDF text and visual evidence')
@@ -758,6 +877,7 @@ def run_job(job, folder, update):
         fit_scene_durations(scenes, duration)
     for scene in scenes:
         scene['beats'] = schedule_beats(scene)
+        keep_visual_beats(scene, len(scene['cues']))
         focus_cue = scene.get('focus_cue')
         if type(focus_cue) is not int or not 0 <= focus_cue < len(scene['cues']):
             scene.pop('focus_cue', None)
