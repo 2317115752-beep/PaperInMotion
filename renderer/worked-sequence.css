@@ -1,0 +1,112 @@
+.pim-worked-sequence {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  gap: 86px;
+  align-items: center;
+  min-height: 365px;
+}
+
+.pim-worked-focus {
+  min-width: 0;
+  border-left: 4px solid var(--accent);
+  padding-left: 38px;
+  min-height: 272px;
+}
+
+.pim-worked-kicker {
+  color: var(--muted);
+  font-size: 26px;
+  font-weight: 640;
+}
+
+.pim-worked-result {
+  margin-top: 28px;
+  color: var(--warm);
+}
+
+.pim-worked-focus-label {
+  color: var(--ink);
+  font-size: 51px;
+  line-height: 1.13;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.pim-worked-focus-value {
+  margin-top: 16px;
+  font-size: 126px;
+  font-weight: 690;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.035em;
+  overflow-wrap: anywhere;
+}
+
+.pim-worked-focus-value.is-vector {
+  font-size: 65px;
+}
+
+.pim-worked-steps {
+  min-width: 0;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.pim-worked-row {
+  --worked-mark: var(--accent);
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  min-height: 84px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
+
+.pim-worked-steps.is-dense .pim-worked-row {
+  min-height: 54px;
+}
+
+.pim-worked-row:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  height: 100%;
+  border-left: 2px solid var(--line);
+}
+
+.pim-worked-row.is-active {
+  --worked-mark: var(--warm);
+}
+
+.pim-worked-node {
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--worked-mark);
+  background: color-mix(in srgb, var(--worked-mark) calc(var(--shown) * 100%), var(--background));
+  transform: scale(calc(.65 + var(--shown) * .35));
+}
+
+.pim-worked-state,
+.pim-worked-value {
+  color: var(--muted);
+  font-size: 30px;
+  font-weight: 635;
+  line-height: 1.12;
+  overflow-wrap: anywhere;
+}
+
+.pim-worked-value {
+  padding-right: 12px;
+  text-align: right;
+  font-size: 34px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pim-worked-row.is-active :is(.pim-worked-state, .pim-worked-value) {
+  color: var(--warm);
+}

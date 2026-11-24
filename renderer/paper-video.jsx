@@ -2,6 +2,7 @@ import React, {useMemo} from 'react';
 import {AbsoluteFill, Audio, Freeze, Img, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {formatCaptionMath, formatMath, LOWER_SCRIPTS, UPPER_SCRIPTS} from './math-format.mjs';
 import {CliffSequence, CLIFF_SCENES} from './cliff-sequence.jsx';
+import {canAnimateWorkedSequence, WorkedSequence} from './worked-sequence.jsx';
 import 'katex/dist/katex.min.css';
 import './video.css';
 
@@ -75,9 +76,13 @@ function activeStep(scene, frame, count) {
   return Math.max(0, latest);
 }
 
-function VisualCues({scene, frame, className = ''}) {
-  const changes = list(scene.visual_beats).filter(beat =>
+function timedVisualBeats(scene) {
+  return list(scene.visual_beats).filter(beat =>
     typeof beat?.label === 'string' && Number.isFinite(scene.cues?.[beat.cue]?.start_frame));
+}
+
+function VisualCues({scene, frame, className = ''}) {
+  const changes = timedVisualBeats(scene);
   if (!changes.length) return null;
   const active = changes.findLastIndex(beat => scene.cues[beat.cue].start_frame <= frame);
   return (
@@ -184,11 +189,33 @@ function TalkingPoint({items, scene, frame}) {
   );
 }
 
+function routeFocusBeats(scene, labels) {
+  const tokens = text => text.normalize('NFKC').toLowerCase().replace(/_[\p{L}\p{N}]+/gu, '')
+    .match(/[\p{L}\p{M}\p{N}]+/gu) ?? [];
+  const names = labels.map(tokens);
+  const beats = timedVisualBeats(scene);
+  const indexes = beats.map(({label}) => {
+    const terms = tokens(label.split(/[=→:]/, 1)[0]);
+    const matches = names.flatMap((name, index) => terms.length && terms.every(term => name.includes(term)) ? [index] : []);
+    return matches.length === 1 ? matches[0] : -1;
+  });
+  if (!beats.length || indexes.some((index, position) => index <= (indexes[position - 1] ?? -1))) return [];
+  return beats.map((beat, position) => ({...beat, index: indexes[position], start: scene.cues[beat.cue].start_frame}));
+}
+
 function Flow({scene, zh, frame}) {
   const nodes = list(scene.nodes).length ? scene.nodes : list(scene.bullets);
   if (nodes.length < 2) return <Takeaways scene={scene} zh={zh} frame={frame} />;
   const labels = nodes.slice(0, 5);
-  const starts = stepTimes(scene, labels.length);
+  const shaped = ['stack', 'branch', 'alternating'].includes(scene.layout);
+  const routeBeats = shaped ? [] : routeFocusBeats(scene, labels);
+  const starts = routeBeats.length ? labels.map((_, index) => {
+    if (!index) return 0;
+    const previous = routeBeats.findLast(beat => beat.index <= index) ?? {index: 0, start: 0};
+    if (previous.index === index) return previous.start;
+    const next = routeBeats.find(beat => beat.index > index) ?? {index: labels.length, start: scene.duration_frames};
+    return previous.start + (next.start - previous.start) * (index - previous.index) / (next.index - previous.index);
+  }) : stepTimes(scene, labels.length);
   const active = Math.max(0, starts.findLastIndex(start => start <= frame));
   const nextGap = (starts[active + 1] ?? scene.duration_frames) - starts[active];
   const travel = entrance(frame, starts[active], Math.max(1, Math.min(15, nextGap)));
@@ -196,7 +223,7 @@ function Flow({scene, zh, frame}) {
   const notes = scene.visual_beats?.length ? <VisualCues scene={scene} frame={frame} />
     : <TalkingPoint items={list(scene.bullets).filter(item => !labels.includes(item))} scene={scene} frame={frame} />;
   const formula = scene.formula && <Reveal delay={10} className="pim-flow-formula"><MathExpression text={scene.formula} /></Reveal>;
-  if (['stack', 'branch', 'alternating'].includes(scene.layout)) {
+  if (shaped) {
     return (
       <div className={'pim-flow-layout pim-flow-layout--' + scene.layout}>
         <div className="pim-shaped-flow-body">
@@ -225,8 +252,15 @@ function Flow({scene, zh, frame}) {
       </div>
     );
   }
+  const cue = routeBeats.find(beat => beat.index === active && beat.start <= frame);
+  const focusStart = cue?.start ?? starts[active];
+  const focus = cue?.label ?? labels[active];
   return (
-    <div className="pim-flow-layout">
+    <div className="pim-flow-layout pim-flow-route">
+      <Reveal key={focusStart + ':' + focus} delay={focusStart}
+        className={'pim-route-focus' + (focus.length > 46 ? ' is-long' : '')}>
+        <CaptionText caption={focus} />
+      </Reveal>
       <div className="pim-flow" style={{'--flow-nodes': labels.length}}>
         <div className="pim-flow-track" aria-hidden="true">
           <div className="pim-flow-trace" style={{width: progress * 100 + '%'}} />
@@ -242,18 +276,21 @@ function Flow({scene, zh, frame}) {
         </div>
       </div>
       {formula}
-      {notes}
+      {!routeBeats.length && notes}
     </div>
   );
 }
 
-function Chart({scene, zh, frame, appears = 0}) {
+function Chart({scene, zh, frame, appears = 0, worked = false}) {
   const chart = scene.chart;
   const points = list(chart?.points).filter(point => typeof point?.label === 'string' && Number.isFinite(point?.value)).slice(0, 6);
   if (points.length < 2) return <Takeaways scene={scene} zh={zh} frame={frame} />;
 
   const stagger = Math.min(4, Math.max(1, Math.floor((scene.duration_frames - appears - 9) / points.length)));
-  const starts = appears ? points.map((_, index) => appears + index * stagger) : stepTimes(scene, points.length);
+  const recap = worked ? list(scene.cues).filter(cue => cue.start_frame >= appears &&
+    cue.start_frame < scene.duration_frames - 8) : [];
+  const starts = recap.length === points.length ? recap.map(cue => cue.start_frame)
+    : appears ? points.map((_, index) => appears + index * stagger) : stepTimes(scene, points.length);
   const active = starts.findLastIndex(start => start <= frame);
   const minimum = Math.min(0, ...points.map(point => point.value));
   const maximum = Math.max(0, ...points.map(point => point.value));
@@ -298,7 +335,7 @@ function Chart({scene, zh, frame, appears = 0}) {
         </div>
       </div>
       {chart.source_label && <div className="pim-chart-source">{limit(chart.source_label, 120)}</div>}
-      <VisualCues scene={scene} frame={frame} />
+      {!worked && <VisualCues scene={scene} frame={frame} />}
     </div>
   );
 }
@@ -476,11 +513,10 @@ function CropSketch({geometry, highlight, zh}) {
   );
 }
 
-function Cliff({scene, zh, frame}) {
+function Cliff({scene, zh, frame, states}) {
   const example = scene.example;
-  const states = exampleStates(example);
   const geometry = states.find(state => state.label === 'g')?.values;
-  if (!Array.isArray(geometry) || geometry.length !== 3) return <ExecutedExample scene={scene} zh={zh} frame={frame} />;
+  if (!Array.isArray(geometry) || geometry.length !== 3) return <ExecutedExample scene={scene} zh={zh} frame={frame} states={states} />;
   const appearance = states.find(state => state.label === 'v')?.values;
   const joined = states.find(state => state.label === '[v; g]')?.values;
   const active = activeStep(scene, frame, 3);
@@ -512,24 +548,53 @@ function Cliff({scene, zh, frame}) {
   );
 }
 
-function ExecutedExample({scene, zh, frame}) {
+function workedSequenceTiming(scene, states) {
+  const planned = timedVisualBeats(scene);
+  const comparableLabel = value => value.normalize('NFKC').replace(/[\s_{}\\]/g, '').toLowerCase();
+  const baseStarts = stepTimes(scene, states.length);
+  const matched = states.map(state => {
+    const name = comparableLabel(state.label);
+    const match = planned.find(beat => comparableLabel(beat.label.split(/[=→:]/, 1)[0]) === name);
+    return match ? scene.cues[match.cue].start_frame : undefined;
+  });
+  const starts = matched.every(Number.isFinite) && new Set(matched).size === states.length ? matched : baseStarts;
+  const sequence = states.map((state, index) => ({...state, start: starts[index]})).sort((a, b) => a.start - b.start);
+  const intro = planned.filter(beat => scene.cues[beat.cue].start_frame < sequence[0].start)
+    .map(beat => ({label: beat.label, start: scene.cues[beat.cue].start_frame}));
+  return {sequence, intro};
+}
+
+function ExecutedExample({scene, zh, frame, states}) {
   const example = scene.example;
-  const states = exampleStates(example).filter(state => Array.isArray(state.values));
   if (!states.length) return <Equation scene={scene} zh={zh} frame={frame} />;
+  const comparison = Array.isArray(example.baseline) && Array.isArray(example.output) && (
+    <div className="pim-state-comparison">
+      <StateCard name={label(zh, '基线结果', 'Baseline result')} values={example.baseline} active={false} />
+      <StateCard name={label(zh, '论文方法结果', 'Proposed method result')} values={example.output} active />
+    </div>
+  );
+  const formula = scene.formula && <Reveal className="pim-flow-formula" delay={15}><MathExpression text={scene.formula} /></Reveal>;
+  if (canAnimateWorkedSequence(states)) {
+    const {sequence, intro} = workedSequenceTiming(scene, states);
+    const appears = Math.round(Math.max(sequence.at(-1).start + 18, scene.duration_frames * .70));
+    const showComparison = appears < scene.duration_frames - 24 && frame >= appears;
+    return (
+      <div className="pim-executed-layout">
+        {showComparison && scene.chart ? <Chart scene={scene} zh={zh} frame={frame} appears={appears} worked />
+          : showComparison && comparison ? <><WorkedHeader zh={zh} />{comparison}</>
+            : <WorkedSequence states={sequence} intro={intro} frame={frame} zh={zh} />}
+        {formula}
+      </div>
+    );
+  }
   const active = activeStep(scene, frame, states.length + 1);
   const starts = stepTimes(scene, states.length + 1);
-  const compare = active === states.length && Array.isArray(example.baseline) && Array.isArray(example.output);
   const first = Math.max(0, Math.min(states.length - 3, active - 1));
   const visibleStates = states.slice(first, first + 3);
   return (
     <div className="pim-executed-layout">
       <WorkedHeader zh={zh} />
-      {compare ? (
-        <div className="pim-state-comparison">
-          <StateCard name={label(zh, '基线结果', 'Baseline result')} values={example.baseline} active={false} />
-          <StateCard name={label(zh, '论文方法结果', 'Proposed method result')} values={example.output} active />
-        </div>
-      ) : (
+      {active === states.length && comparison ? comparison : (
         <div className="pim-state-row">
           {visibleStates.map((state, index) => (
             <StateCard
@@ -542,7 +607,7 @@ function ExecutedExample({scene, zh, frame}) {
           ))}
         </div>
       )}
-      {!!scene.formula && <Reveal className="pim-flow-formula" delay={15}><MathExpression text={scene.formula} /></Reveal>}
+      {formula}
     </div>
   );
 }
@@ -638,12 +703,14 @@ function Content({scene, zh, frame}) {
     const isLoRA = scene.example.kind === 'low_rank' && scene.example.input && scene.example.hidden;
     const isCliff = scene.example.kind === 'cliff_geometry';
     const Component = isLoRA ? LoRA : isCliff ? Cliff : ExecutedExample;
-    if (!scene.chart) return <Component {...props} />;
-    const steps = isLoRA ? 4 : isCliff ? 3 : exampleStates(scene.example).length + 1;
+    const states = exampleStates(scene.example).filter(state => Array.isArray(state.values));
+    const worked = !isLoRA && !isCliff && canAnimateWorkedSequence(states);
+    if (!scene.chart || worked) return <Component {...props} states={states} />;
+    const steps = isLoRA ? 4 : isCliff ? 3 : states.length + 1;
     const lastStep = stepTimes(scene, steps).at(-1);
     const appears = Math.round(Math.max(lastStep + 18, scene.duration_frames * .70));
     if (appears < scene.duration_frames - 24 && frame >= appears) return <Chart {...props} appears={appears} />;
-    return <Component {...props} />;
+    return <Component {...props} states={states} />;
   }
   switch (scene.visual_type) {
     case 'flow': return <Flow {...props} />;

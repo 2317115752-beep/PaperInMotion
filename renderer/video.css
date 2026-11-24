@@ -386,6 +386,29 @@
   margin-top: 22px;
 }
 
+.pim-route-focus {
+  display: flex;
+  min-height: 146px;
+  align-items: center;
+  justify-content: center;
+  gap: .3em;
+  margin-bottom: 17px;
+  font-size: 64px;
+  color: var(--ink);
+  text-align: center;
+  line-height: 1.16;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+
+.pim-route-focus.is-long {
+  font-size: 45px;
+}
+
+.pim-route-focus .pim-math {
+  color: var(--accent);
+}
+
 .pim-equation-grid, .pim-figure-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
