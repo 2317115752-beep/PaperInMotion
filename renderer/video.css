@@ -364,17 +364,6 @@
   color: var(--accent);
 }
 
-.pim-figure-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
-  gap: 50px;
-  align-items: center;
-}
-
-.pim-figure-layout.is-solo {
-  grid-template-columns: minmax(0, 1fr);
-}
-
 .pim-derivation {
   display: grid;
   width: 100%;
@@ -533,72 +522,6 @@
   min-width: 1.15em;
   text-align: center;
   white-space: nowrap;
-}
-
-.pim-figure {
-  position: relative;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 13px;
-  padding: 12px 26px 55px;
-  min-width: 0;
-  height: 555px;
-  overflow: hidden;
-  box-shadow: 0 15px 24px var(--shade);
-}
-
-.pim-figure img {
-  display: block;
-  height: 100%;
-  width: 100%;
-  object-fit: contain;
-}
-
-.pim-figure-image {
-  position: relative;
-  height: 100%;
-  overflow: hidden;
-}
-
-.pim-figure-layout.is-detail .pim-figure {
-  padding: 18px 30px 50px;
-  border-radius: 3px;
-  border-left: 6px solid var(--accent);
-}
-
-.pim-figure-layout.has-cues {
-  gap: 18px;
-}
-
-.pim-figure-layout.has-cues .pim-figure {
-  height: 447px;
-}
-
-.pim-figure-layout .pim-visual-cues.is-side {
-  grid-auto-flow: row;
-  grid-auto-columns: auto;
-}
-
-.pim-figure-source {
-  position: absolute;
-  left: 26px;
-  right: 26px;
-  bottom: 17px;
-  font-size: 23px;
-  color: #272d2a;
-  text-align: right;
-}
-
-.pim-figure-layout {
-  grid-template-columns: minmax(0, 3fr) minmax(0, 1.05fr);
-}
-
-.pim-figure-layout.is-solo {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.pim-figure-layout .pim-talking-point {
-  font-size: 35px;
 }
 
 .pim-chart-layout {

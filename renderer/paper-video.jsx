@@ -1,5 +1,5 @@
 import React, {useLayoutEffect, useMemo, useRef} from 'react';
-import {AbsoluteFill, Audio, Freeze, Img, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {AbsoluteFill, Audio, Freeze, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {formatCaptionMath, formatMath, LOWER_SCRIPTS, UPPER_SCRIPTS} from './math-format.mjs';
 import {CliffSequence, CLIFF_SCENES} from './cliff-sequence.jsx';
 import {flowPoints, flowTiming} from './flow-motion.mjs';
@@ -146,15 +146,6 @@ function focusProgress(scene, frame, fps) {
   const push = Math.min(remaining * .35, fps * .85);
   const settle = Math.min(remaining * .25, fps * .65);
   return entrance(frame, start, push) * (1 - entrance(frame, start + push, settle));
-}
-
-function visualCuePulse(scene, frame) {
-  const cues = list(scene.cues);
-  const planned = list(scene.visual_beats).map(beat => cues[beat.cue]?.start_frame).filter(Number.isFinite);
-  const starts = planned.length ? planned : cues.slice(1).map(cue => cue.start_frame);
-  const start = starts.findLast(value => value <= frame);
-  if (!Number.isFinite(start)) return 0;
-  return entrance(frame, start, 12) * (1 - entrance(frame, start + 24, 24));
 }
 
 function Arrow({active = false, pulseStart}) {
@@ -789,42 +780,21 @@ function ExecutedExample({scene, zh, frame, states, focus, paced}) {
   );
 }
 
-function Figure({scene, zh, frame, focus, paced}) {
-  if (paced || (scene.visual_type === 'figure' && scene.layout === 'full')) {
-    return <SourceFigure scene={scene} zh={zh} frame={frame} CaptionText={CaptionText} focus={focus} paced={paced} />;
-  }
-  const progress = entrance(frame, 0, Math.min(scene.duration_frames, 38));
-  const detail = scene.layout === 'detail';
-  const split = scene.layout === 'split';
-  const hasVisualBeats = list(scene.visual_beats).length > 0;
-  const points = list(scene.bullets);
-  const notes = split || !scene.layout ? points : [];
-  const beside = split && (notes.length || hasVisualBeats);
-  const solo = !beside && !notes.length;
-  const scale = detail ? .9 + .05 * progress + .05 * visualCuePulse(scene, frame) : .96 + .04 * progress;
-  return (
-    <div className={'pim-figure-layout' + (solo ? ' is-solo' : '') + (detail ? ' is-detail' : '') +
-      (hasVisualBeats && solo ? ' has-cues' : '')}>
-      <Reveal className="pim-figure" style={{opacity: progress}}>
-        <div className="pim-figure-image">
-          <Img src={staticFile(scene.figure_file)} alt={scene.figure_caption || label(zh, '论文原图', 'Original paper figure')}
-            style={{transform: `scale(${scale})`}} />
-        </div>
-        {scene.figure_source && <div className="pim-figure-source">{limit(scene.figure_source, 100)}</div>}
-      </Reveal>
-      {hasVisualBeats ? <VisualCues scene={scene} frame={frame} className={solo ? '' : 'is-side'} />
-        : <TalkingPoint items={notes} scene={scene} frame={frame} />}
-    </div>
-  );
+function usesSourceFigure(scene) {
+  if (!scene.figure_file || Object.hasOwn(CLIFF_SCENES, scene.visual_demo)) return false;
+  if (scene.visual_type === 'equation') return !scene.equations?.length;
+  if (scene.visual_type === 'figure') return true;
+  if (scene.visual_type !== 'table') return false;
+  const rows = list(scene.table?.rows).slice(0, 7);
+  const headers = list(scene.table?.headers);
+  return !rows.length || !headers.length ||
+    rows.some(row => list(row).some(cell => String(cell ?? '').includes('\n')));
 }
 
-function Table({scene, zh, frame, focus, paced}) {
+function Table({scene, zh, frame, focus}) {
   const headers = list(scene.table?.headers).slice(0, 5);
   const rows = list(scene.table?.rows).slice(0, 7);
   if (!headers.length || !rows.length) return <Takeaways scene={scene} zh={zh} frame={frame} focus={focus} />;
-  if (scene.figure_file && rows.some(row => list(row).some(cell => String(cell ?? '').includes('\n')))) {
-    return <Figure scene={scene} zh={zh} frame={frame} focus={focus} paced={paced} />;
-  }
   const starts = stepTimes(scene, rows.length);
   const active = activeStep(scene, frame, rows.length);
   const dense = rows.length > 5 || headers.length > 4;
@@ -889,9 +859,10 @@ function Content({scene, zh, frame, pacing}) {
   }
   if (scene.visual_type === 'title') return <Title {...props} />;
   if (scene.visual_type === 'chart' && scene.chart) return <Chart {...props} />;
+  if (usesSourceFigure(scene)) {
+    return <SourceFigure {...props} CaptionText={CaptionText} />;
+  }
   if (scene.visual_type === 'table' && scene.table?.rows?.length) return <Table {...props} />;
-  if (scene.figure_file && ['figure', 'table', 'equation'].includes(scene.visual_type) &&
-    !(scene.visual_type === 'equation' && scene.equations?.length)) return <Figure {...props} />;
   if (scene.example && ['matrix', 'equation', 'comparison'].includes(scene.visual_type)) {
     const isLoRA = scene.example.kind === 'low_rank' && scene.example.input && scene.example.hidden;
     const isCliff = scene.example.kind === 'cliff_geometry';
@@ -958,7 +929,7 @@ function Scene({scene, manifest, index, start, total, previous, visualOnly = fal
     : undefined;
   const entry = entrance(frame, 0, 16);
   const pacing = useMemo(() => pacingPoints(scene), [scene]);
-  const stableFocus = pacing.length > 0 || scene.layout === 'derive' || (scene.visual_type === 'figure' && scene.layout === 'full');
+  const stableFocus = pacing.length > 0 || scene.layout === 'derive' || usesSourceFigure(scene);
   const camera = stableFocus ? 1 : 1 + .045 * focusProgress(scene, frame, fps);
   const evidence = list(scene.evidence);
   const sourceLabels = [...new Set(evidence.map(item => {
