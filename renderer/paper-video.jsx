@@ -4,6 +4,7 @@ import {formatCaptionMath, formatMath, LOWER_SCRIPTS, UPPER_SCRIPTS} from './mat
 import {CliffSequence, CLIFF_SCENES} from './cliff-sequence.jsx';
 import {equationCueStarts} from './equation-timing.mjs';
 import {flowPoints, flowTiming} from './flow-motion.mjs';
+import {narratedOutline} from './narrated-outline.mjs';
 import {SourceFigure} from './source-figure.jsx';
 import {canAnimateWorkedSequence, WorkedSequence} from './worked-sequence.jsx';
 import 'katex/dist/katex.min.css';
@@ -232,7 +233,9 @@ function Title({scene, zh, frame}) {
         </div>}
       </div>
       <div className="pim-title-visual">
-        <TitleArtwork />
+        {!anchors.length && scene.figure_file && scene.figure_caption
+          ? <SourceFigure scene={scene} zh={zh} frame={frame} CaptionText={CaptionText} />
+          : <TitleArtwork />}
         {previous.length > 0 && <ul className="pim-title-anchors" style={{opacity: framingShift}}>
           {previous.slice(-3).map(anchor => <li key={anchor.label}>
             <CaptionText caption={limit(anchor.label, 64)} />
@@ -839,6 +842,33 @@ function Table({scene, zh, frame, focus}) {
   );
 }
 
+function NarratedTakeaways({panels, frame}) {
+  const active = panels.findLastIndex(panel => panel.start <= frame);
+  const wrapUp = panels.at(-1).end ?? Infinity;
+  const settle = Number.isFinite(wrapUp) ? entrance(frame, wrapUp, 24) : 0;
+  return (
+    <ol className="pim-narrated-outline" style={{
+      gridTemplateColumns: `repeat(${panels.length === 3 ? 3 : 2}, minmax(0, 1fr))`,
+    }}>
+      {panels.map(({text, detail, start, detailStart}, index) => {
+        const emphasize = index === active ? 1 - settle : 0;
+        const open = entrance(frame, start, 26);
+        const expand = entrance(frame, detailStart ?? start + 18, 22);
+        return <li key={start} className="pim-narrated-outline-item" style={{
+          opacity: open * (.68 + .32 * Math.max(emphasize, settle)),
+          transform: `translateY(${30 * (1 - open) - 11 * emphasize * open}px)`,
+        }}>
+          <span className="pim-narrated-outline-bar" style={{transform: `scaleX(${open * (.38 + expand * .62)})`}} />
+          <strong><CaptionText caption={text} /></strong>
+          {detail && <div className="pim-narrated-outline-detail" style={{
+            opacity: expand, transform: `translateY(${15 * (1 - expand)}px)`,
+          }}><CaptionText caption={detail} /></div>}
+        </li>;
+      })}
+    </ol>
+  );
+}
+
 function Takeaways({scene, zh, frame, focus}) {
   if (focus) {
     return (
@@ -854,6 +884,8 @@ function Takeaways({scene, zh, frame, focus}) {
   const panels = changes.length ? changes.map(beat => ({
     text: beat.label, start: scene.cues?.[beat.cue]?.start_frame ?? 0,
   })) : points.map((text, i) => ({text, start: starts[i]}));
+  const outline = !panels.length && !scene.formula ? narratedOutline(scene.cues) : [];
+  if (outline.length > 1) return <NarratedTakeaways panels={outline} frame={frame} />;
   const grouped = panels.length > 1 && ['sequence', 'recap'].includes(scene.layout);
   const current = panels.findLastIndex(panel => panel.start <= frame);
   return (
