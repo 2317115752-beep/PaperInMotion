@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, StringConstraints, field_validator
 from typing import Annotated, Literal
 from time import monotonic
 from .examples import execute_example
-from .providers import ProviderError, chat_json, get_config, synthesize
+from .providers import ProviderError, chat_json, get_config, redact, synthesize
 from .paper import CAPTION, read_document
 from .timing import (
     FPS, dump_srt, estimated_cues, fit_scene_durations, has_spoken_text, narration_shortfalls,
@@ -702,6 +702,7 @@ def render(manifest_path, output, update):
     node = os.getenv('NODE_BINARY') or shutil.which('node')
     if not node:
         raise ValueError('未找到 Node.js，请安装22.12+后重试。')
+    renderer_error = {}
     with (output.parent / 'render.log').open('w', encoding='utf-8') as log:
         process = subprocess.Popen([node, str(ROOT/'renderer/render.mjs'), str(manifest_path), str(output), str(output.with_name('poster.png'))], cwd=ROOT, stdout=subprocess.PIPE, stderr=log, text=True)
         for line in process.stdout:
@@ -711,11 +712,29 @@ def render(manifest_path, output, update):
                 event = json.loads(line)
             except ValueError:
                 continue
+            if not isinstance(event, dict):
+                continue
             if event.get('event') == 'render_progress':
                 value = max(0, min(100, event.get('percent', 0)))
                 update(stage='rendering', progress=78+round(value*.2), message=f'正在渲染：{value}%')
+            elif event.get('event') == 'render_error':
+                renderer_error = event
         code = process.wait()
     if code or not output.is_file() or output.stat().st_size < 1000:
+        phase = renderer_error.get('phase')
+        phase_label = {
+            'bundle': '打包渲染资源',
+            'browser_start': '启动渲染浏览器',
+            'preview': '生成封面',
+            'encoding': '渲染并编码视频',
+        }.get(phase) if isinstance(phase, str) else None
+        reason = renderer_error.get('message')
+        if isinstance(reason, str) and reason.strip():
+            detail = ' '.join(redact(reason).split())[:360]
+            stage = f'（{phase_label}）' if phase_label else ''
+            if 'target closed' in detail.lower():
+                raise ValueError(f'渲染浏览器意外退出{stage}。请重试渲染。若再次失败，请查看 render.log。{detail}')
+            raise ValueError(f'视频渲染失败{stage}。请查看 render.log。{detail}')
         raise ValueError('视频渲染失败，请查看任务目录 render.log，检查 Node 依赖与渲染浏览器。')
 
 
