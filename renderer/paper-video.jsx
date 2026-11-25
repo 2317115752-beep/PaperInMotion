@@ -2,6 +2,7 @@ import React, {useLayoutEffect, useMemo, useRef} from 'react';
 import {AbsoluteFill, Audio, Freeze, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {formatCaptionMath, formatMath, LOWER_SCRIPTS, UPPER_SCRIPTS} from './math-format.mjs';
 import {CliffSequence, CLIFF_SCENES} from './cliff-sequence.jsx';
+import {equationCueStarts} from './equation-timing.mjs';
 import {flowPoints, flowTiming} from './flow-motion.mjs';
 import {SourceFigure} from './source-figure.jsx';
 import {canAnimateWorkedSequence, WorkedSequence} from './worked-sequence.jsx';
@@ -498,8 +499,28 @@ function Derivation({scene, equations, frame, focus}) {
   const visual = timedVisualBeats(scene);
   const planned = visual.length === equations.length
     ? visual.map(beat => scene.cues[beat.cue].start_frame) : stepTimes(scene, equations.length);
-  const starts = [0, ...planned.slice(1)];
-  const active = starts.findLastIndex(start => start <= frame);
+  const spokenStarts = equationCueStarts(equations, scene.cues);
+  const starts = spokenStarts && spokenStarts.at(-1) < scene.duration_frames
+    ? spokenStarts : [0, ...planned.slice(1)];
+  const active = Math.max(0, starts.findLastIndex(start => start <= frame));
+  const substitution = spokenStarts && scene.cues.find(cue =>
+    cue.start_frame > starts.at(-1) && cue.start_frame <= frame && frame < cue.end_frame &&
+    /数值.{0,6}代入|代入.{0,6}数值|substitut(?:e|ing|ion)|plug(?:ging)? in/i.test(cue.text));
+  // Keep the substituted formulas together while their inputs are being read aloud.
+  const worked = substitution ? equations.filter(({expression}) =>
+    (expression.match(/(?<![a-z_])\d+(?:\.\d+)?/gi) ?? []).length >= 2) : [];
+  if (worked.length > 1) {
+    return (
+      <div className="pim-derivation-substitution" style={{gridTemplateColumns: `repeat(${worked.length}, minmax(0, 1fr))`}}>
+        {worked.map((equation, index) => (
+          <Reveal key={index} delay={substitution.start_frame + index * 8} className="pim-derivation-substitution-term">
+            <div className="pim-derivation-label"><CaptionText caption={limit(equation.label, 56)} /></div>
+            <FittedEquation expression={equation.expression} className="pim-derivation-expression" />
+          </Reveal>
+        ))}
+      </div>
+    );
+  }
   const current = equations[active];
   const previous = equations[active - 1];
   const cue = visual.findLast(beat => scene.cues[beat.cue].start_frame <= frame);
@@ -854,6 +875,10 @@ function Content({scene, zh, frame, pacing}) {
   const point = pacing.findLast(item => item.start_frame <= frame);
   const focus = point && {...point, first_frame: pacing[0].start_frame};
   const props = {scene, zh, frame, focus, paced: pacing.length > 0};
+  const hasDerivation = scene.visual_type === 'equation' && scene.equations?.length > 1;
+  if (hasDerivation && scene.visual_demo && scene.visual_demo !== 'translate-full') {
+    return <Equation {...props} />;
+  }
   if (Object.hasOwn(CLIFF_SCENES, scene.visual_demo)) {
     return <PacingSupport focus={focus}><CliffSequence variant={scene.visual_demo} {...props} /></PacingSupport>;
   }

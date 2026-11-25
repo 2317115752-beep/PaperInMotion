@@ -364,6 +364,24 @@
   color: var(--accent);
 }
 
+.pim-derivation-substitution {
+  display: grid;
+  gap: 36px;
+  align-items: stretch;
+}
+
+.pim-derivation-substitution-term {
+  min-width: 0;
+  height: 272px;
+  display: grid;
+  grid-template-rows: 1fr 2fr;
+  gap: 12px;
+  padding: 32px;
+  border-top: 4px solid var(--warm);
+  background: var(--surface);
+  border-radius: 8px;
+}
+
 .pim-derivation {
   display: grid;
   width: 100%;

@@ -261,11 +261,18 @@ function Reprojection({scene, frame, zh}) {
   const projectionStart = atCue(scene, 1, 0, .09);
   const project = across(frame, projectionStart, atCue(scene, 1, .78, .28));
   const compare = across(frame, atCue(scene, 2, 0, .34), atCue(scene, 2, .34, .43));
-  const residual = across(frame, atCue(scene, 2, .38, .43), atCue(scene, 2, .85, .55));
-  const lossStart = atCue(scene, 3, 0, .60);
-  const combine = across(frame, lossStart, atCue(scene, 3, .64, .77));
-  const rotationStart = atCue(scene, 3, .77, .84);
-  const rotation = across(frame, rotationStart, atCue(scene, 4, .90, .97));
+  const rotationCue = scene.cues?.find(cue => /全局旋转|global rotation|perspective distortion/i.test(cue.text));
+  const lossCue = scene.cues?.find(cue => /总损失|组合损失|total loss|combined loss|weighted sum/i.test(cue.text));
+  const rotationStart = rotationCue?.start_frame ?? atCue(scene, 3, .1, .58);
+  const lossStart = lossCue?.start_frame ?? Math.max(rotationStart + 1, atCue(scene, 4, 0, .87));
+  const lossEnd = lossCue?.end_frame ?? scene.duration_frames;
+  const rotation = across(frame, rotationStart, Math.min(lossStart, rotationCue?.end_frame ?? lossStart));
+  const residualStart = atCue(scene, 2, .22, .40);
+  const residualEnd = Math.max(residualStart + 1, rotationStart + .34 *
+    Math.max(0, Math.min(lossStart, (rotationCue?.end_frame ?? lossStart)) - rotationStart));
+  const residual = across(frame, residualStart, residualEnd);
+  const inspect = compare * (1 - across(frame, rotationStart, lossStart));
+  const combine = clamp((frame - lossStart) / Math.max(1, lossEnd - lossStart));
   const origin = [113, 239];
   const rotateJoint = ([x, y, z], angle) => [
     Math.cos(angle) * x + Math.sin(angle) * z,
@@ -286,7 +293,7 @@ function Reprojection({scene, frame, zh}) {
     const [imageX, imageY] = fullFrame([x, y, 523 + z]);
     return [imageX + JOINT_OFFSETS[index][0] * .28, imageY + JOINT_OFFSETS[index][1] * .28];
   });
-  const focus = Math.min(2, Math.floor(clamp((frame - lossStart) / Math.max(1, rotationStart - lossStart)) * 3));
+  const focus = Math.min(2, Math.floor(combine * WEIGHTED_TERMS.length));
 
   return (
     <section className="pim-cliff-sequence pim-cliff-reprojection">
@@ -328,18 +335,21 @@ function Reprojection({scene, frame, zh}) {
           <rect x="976" y="18" width="687" height="388" fill="url(#cliff-project-grid)" stroke="var(--line)" strokeWidth="2" rx="16" />
           <path d="M1300 178h60m-30-30v60" stroke="var(--line)" strokeWidth="2.5" />
           <text x="1012" y="64" className="pim-cliff-svg-label">{label(zh, '完整图像', 'Full image')}</text>
-          <Skeleton points={predicted} opacity={project} width={5} />
-          <Skeleton points={target} color="var(--warm)" opacity={.26 * compare} width={3} dots={false} />
-          {target.map(([x, y], index) => (
-            <circle key={index} cx={x} cy={y} r="6" fill="var(--surface)" stroke="var(--warm)"
-              strokeWidth="3" opacity={compare} />
-          ))}
-          {RAY_POINTS.map(index => (
-            <line key={index} x1={predicted[index][0]} y1={predicted[index][1]}
-              x2={mix(predicted[index][0], target[index][0], residual)}
-              y2={mix(predicted[index][1], target[index][1], residual)}
-              stroke="var(--warm)" strokeWidth="4" strokeLinecap="round" opacity={residual} />
-          ))}
+          <g transform={`translate(1330 227) scale(${1 + .22 * inspect}) translate(-1330 -227)`}>
+            <Skeleton points={predicted} opacity={project} width={5} />
+            <Skeleton points={target} color="var(--warm)" opacity={.26 * compare} width={3} dots={false} />
+            {target.map(([x, y], index) => (
+              <circle key={index} cx={x} cy={y} r="6" fill="var(--surface)" stroke="var(--warm)"
+                strokeWidth="3" opacity={compare} />
+            ))}
+            {RAY_POINTS.map((index, order) => {
+              const amount = clamp(residual * 1.45 - order * .08);
+              return <line key={index} x1={predicted[index][0]} y1={predicted[index][1]}
+                x2={mix(predicted[index][0], target[index][0], amount)}
+                y2={mix(predicted[index][1], target[index][1], amount)}
+                stroke="var(--warm)" strokeWidth="4" strokeLinecap="round" opacity={amount} />;
+            })}
+          </g>
           <line x1="1009" y1="372" x2="1043" y2="372" stroke="var(--accent)" strokeWidth="4" opacity={project} />
           <text x="1053" y="381" className="pim-cliff-svg-note" opacity={project}>{label(zh, '投影关键点', 'Projected joints')}</text>
           <circle cx="1403" cy="372" r="7" fill="var(--surface)" stroke="var(--warm)" strokeWidth="3" opacity={compare} />
