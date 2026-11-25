@@ -256,38 +256,6 @@
   isolation: isolate;
 }
 
-.pim-flow-track, .pim-flow-marker-track {
-  position: absolute;
-  inset: 41px calc(50% / var(--flow-nodes)) auto;
-  height: 3px;
-  pointer-events: none;
-}
-
-.pim-flow-track {
-  background: repeating-linear-gradient(90deg, var(--line) 0 10px, transparent 10px 17px);
-}
-
-.pim-flow-marker-track {
-  z-index: 2;
-}
-
-.pim-flow-trace {
-  height: 100%;
-  background: var(--accent);
-}
-
-.pim-flow-marker {
-  position: absolute;
-  top: 50%;
-  width: 15px;
-  height: 15px;
-  border: 3px solid var(--surface);
-  border-radius: 50%;
-  background: var(--warm);
-  box-shadow: 0 0 0 2px var(--warm);
-  transform: translate(-50%, -50%);
-}
-
 .pim-arrow {
   width: 54px;
   flex: 0 0 54px;
@@ -359,19 +327,6 @@
   color: var(--accent);
 }
 
-.pim-flow-card:has(+ .pim-flow-card)::after {
-  position: absolute;
-  top: 35px;
-  right: -4px;
-  z-index: 1;
-  width: 11px;
-  height: 11px;
-  border-top: 2px solid var(--muted);
-  border-right: 2px solid var(--muted);
-  transform: rotate(45deg);
-  content: "";
-}
-
 .pim-flow-formula {
   font-family: Georgia, "STIX Two Text", "Noto Serif", "Songti SC", serif;
   font-size: 41px;
@@ -409,59 +364,15 @@
   color: var(--accent);
 }
 
-.pim-equation-grid, .pim-figure-layout {
+.pim-figure-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
   gap: 50px;
   align-items: center;
 }
 
-.pim-equation-grid.is-solo, .pim-figure-layout.is-solo {
+.pim-figure-layout.is-solo {
   grid-template-columns: minmax(0, 1fr);
-}
-
-.pim-equation-panel {
-  display: grid;
-  gap: 14px;
-  padding: 25px;
-}
-
-.pim-equation {
-  position: relative;
-  display: grid;
-  gap: 10px;
-  border-left: 3px solid var(--line);
-  padding: 12px 21px;
-  font-family: Georgia, "STIX Two Text", "Noto Serif", "Songti SC", serif;
-  font-size: 59px;
-  line-height: 1.18;
-  overflow-wrap: anywhere;
-}
-
-.pim-equation.is-active {
-  border-color: var(--accent);
-  background: var(--accentPale);
-}
-
-.pim-equation-underline {
-  position: absolute;
-  left: 21px;
-  right: 21px;
-  bottom: 0;
-  height: 3px;
-  background: var(--accent);
-  opacity: .65;
-  transform-origin: left center;
-}
-
-.pim-equation .is-long {
-  font-size: 37px;
-}
-
-.pim-equation-label {
-  color: var(--muted);
-  font-family: Inter, -apple-system, "PingFang SC", sans-serif;
-  font-size: 22px;
 }
 
 .pim-derivation {
@@ -511,14 +422,6 @@
   grid-row: 2;
   height: 100%;
   font-size: 98px;
-}
-
-.pim-derivation-rule {
-  grid-row: 3;
-  width: 156px;
-  height: 4px;
-  border-radius: 100px;
-  background: var(--warm);
 }
 
 .pim-derivation-context {
@@ -1032,7 +935,7 @@
 
 .pim-shaped-flow {
   display: grid;
-  gap: 16px 36px;
+  grid-auto-rows: 1fr;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1043,111 +946,174 @@
   min-width: 0;
 }
 
-.pim-shaped-flow li {
-  display: flex;
-  align-items: center;
-  min-height: 66px;
-  padding: 16px 25px;
-  border-left: 5px solid var(--line);
-  background: var(--surface);
-  color: var(--muted);
-  font-size: 32px;
-  font-weight: 650;
-  overflow-wrap: anywhere;
-  transform: translateX(calc(24px * (1 - var(--arrival))));
-}
-
-.pim-shaped-flow li.is-active {
-  border-color: var(--warm);
-  background: var(--accentPale);
-  color: var(--ink);
-}
-
 .pim-flow-layout--stack .pim-shaped-flow-body {
   grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
-  gap: 70px;
-  align-items: stretch;
-}
-
-.pim-stack-focus {
-  display: grid;
   align-items: center;
-  grid-template-columns: 6px minmax(0, 1fr);
-  gap: 28px;
-  color: var(--accent);
-}
-
-.pim-stack-progress {
-  height: 100%;
-  background: var(--line);
-}
-
-.pim-stack-progress span {
-  display: block;
-  width: 100%;
-  background: var(--warm);
+  gap: 70px;
 }
 
 .pim-stack-label {
+  color: var(--accent);
   font-size: 60px;
   font-weight: 720;
   line-height: 1.15;
   overflow-wrap: anywhere;
 }
 
-.pim-flow-layout--branch .pim-shaped-flow {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  width: min(1350px, 100%);
-  align-items: stretch;
-  justify-self: center;
+.pim-flow-connections {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: var(--line);
 }
 
-.pim-flow-layout--branch li:first-child {
-  grid-column: 1 / -1;
-  justify-content: center;
-  border-left: 0;
-  border-bottom: 5px solid var(--accent);
+.pim-flow > .pim-flow-connections {
+  height: 85px;
 }
 
-.pim-flow-layout--alternating .pim-shaped-flow {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  width: min(1410px, 100%);
+.pim-flow-connections svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  stroke: currentColor;
+  stroke-width: 3px;
+  stroke-dasharray: 6 9;
+}
+
+.pim-flow-connections .pim-flow-connection-trace {
+  stroke: var(--accent);
+  stroke-width: 4px;
+  stroke-dasharray: none;
+}
+
+.pim-flow-packet {
+  position: absolute;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  border: 3px solid var(--surface);
+  border-radius: 50%;
+  background: var(--warm);
+  box-shadow: 0 0 0 3px var(--warm);
+  transform: translate(-50%, -50%);
+}
+
+.pim-flow-card.is-active .pim-flow-step {
+  border-color: color-mix(in srgb, var(--warm) calc(var(--arrival) * 100%), var(--accent));
+  box-shadow: 0 0 0 calc(5px + 6px * var(--arrival)) var(--shade);
+}
+
+.pim-shaped-graph {
   position: relative;
+  min-width: 0;
+  isolation: isolate;
+}
+
+.pim-flow-layout--alternating .pim-shaped-graph,
+.pim-flow-layout--branch .pim-shaped-graph {
+  width: min(1410px, 100%);
   justify-self: center;
 }
 
-.pim-flow-layout--alternating li {
+.pim-shaped-flow li {
+  --pin-x: 50%;
+  position: relative;
   grid-row: var(--step);
+  display: flex;
+  align-items: center;
+  min-height: 79px;
+  color: var(--muted);
+  font-size: 32px;
+  font-weight: 650;
+  line-height: 1.13;
 }
 
-.pim-flow-layout--alternating li:nth-child(odd) {
-  grid-column: 1;
-  border-left: 0;
-  border-right: 5px solid var(--accent);
-  justify-content: flex-end;
+.pim-shaped-label {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 9px 20px;
+  opacity: calc(.33 + .67 * var(--arrival));
+  overflow-wrap: anywhere;
+  transform: translateX(calc(16px * (1 - var(--arrival))));
+}
+
+.pim-shaped-flow li.is-active .pim-shaped-label {
+  color: var(--ink);
+}
+
+.pim-shaped-pin {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: var(--pin-x);
+  width: 25px;
+  height: 25px;
+  border: 3px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
+  transform: translate(-50%, -50%);
+}
+
+.pim-shaped-flow .is-visited .pim-shaped-pin {
+  border-color: var(--accent);
+}
+
+.pim-shaped-flow .is-active .pim-shaped-pin {
+  border-color: var(--warm);
+  background: color-mix(in srgb, var(--warm) calc(var(--travel) * 100%), var(--surface));
+  box-shadow: 0 0 0 calc(3px + 8px * var(--travel)) var(--shade);
+}
+
+.pim-flow-layout--stack .pim-shaped-flow li {
+  --pin-x: 4%;
+  padding-left: calc(4% + 22px);
+}
+
+.pim-flow-layout--alternating .pim-shaped-flow li:nth-child(odd) {
+  --pin-x: 43%;
+  padding-right: calc(57% + 16px);
   text-align: right;
 }
 
-.pim-flow-layout--alternating li:nth-child(even) {
-  grid-column: 2;
+.pim-flow-layout--alternating .pim-shaped-flow li:nth-child(even) {
+  --pin-x: 57%;
+  padding-left: calc(57% + 16px);
 }
 
-.pim-equation-callout {
-  grid-template-columns: minmax(0, 1fr);
-  justify-items: center;
-  gap: 22px;
+.pim-flow-layout--branch .pim-shaped-flow {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 26px 42px;
 }
 
-.pim-equation-callout .pim-equation-panel {
-  max-width: 100%;
-  text-align: center;
+.pim-flow-layout--branch li {
+  grid-row: auto;
+  min-height: 92px;
+  border-bottom: 2px solid var(--line);
+  background: color-mix(in srgb, var(--surface) calc(var(--arrival) * 100%), transparent);
 }
 
-.pim-equation-callout .pim-equation {
-  border-left: 0;
-  background: transparent;
-  color: var(--accent);
-  font-size: 66px;
+.pim-flow-layout--branch li.is-active {
+  background: color-mix(in srgb, var(--warm) 12%, var(--surface));
+}
+
+.pim-flow-layout--branch li::after {
+  position: absolute;
+  inset: auto 0 -2px;
+  height: 3px;
+  background: var(--accent);
+  content: "";
+  transform-origin: left;
+  transform: scaleX(var(--travel));
+}
+
+.pim-flow-layout--branch li.is-active::after {
+  background: var(--warm);
+}
+
+.pim-flow-layout--branch li:first-child:nth-last-child(odd) {
+  grid-column: 1 / -1;
 }
 
 .pim-takeaway-list {
@@ -1226,7 +1192,7 @@
 }
 
 .pim-flow-formula sub, .pim-flow-formula sup,
-.pim-equation sub, .pim-equation sup {
+.pim-derivation-fit sub, .pim-derivation-fit sup {
   font-size: .64em;
   line-height: 0;
 }
@@ -1248,14 +1214,35 @@
   overflow-wrap: anywhere;
 }
 
-.pim-title-grid .pim-title-art {
-  transform: translateX(calc(36px * var(--pacing-title-shift, 0)))
-    scale(calc(1 - .12 * var(--pacing-title-shift, 0)));
+.pim-title-visual {
+  position: relative;
+  min-height: 537px;
 }
 
-.pim-paced-title-lead {
-  font-size: 49px;
-  max-width: 930px;
+.pim-title-visual .pim-title-art {
+  transform: translateY(calc(-54px * var(--pacing-title-shift, 0)))
+    scale(calc(1 - .25 * var(--pacing-title-shift, 0)));
+}
+
+.pim-title-anchors {
+  position: absolute;
+  right: 10px;
+  bottom: 0;
+  left: 10px;
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pim-title-anchors li {
+  color: var(--muted);
+  border-left: 2px solid var(--line);
+  padding-left: 15px;
+  font-size: 24px;
+  line-height: 1.19;
+  overflow-wrap: anywhere;
 }
 
 .pim-paced-equation {
@@ -1280,12 +1267,52 @@
   font-size: 105px;
 }
 
-.pim-paced-equation > .pim-paced-note {
+.pim-single-equation-note {
   position: absolute;
   bottom: 25px;
   justify-self: center;
   max-width: 1250px;
-  font-size: 48px;
+  color: var(--ink);
+  font-size: 42px;
+  font-weight: 640;
+  text-align: center;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.pim-equation-progress {
+  display: block;
+  height: 3px;
+  margin-top: 16px;
+  background: var(--accent);
+  transform-origin: left;
+}
+
+.pim-paced-equation.is-callout .pim-derivation-expression {
+  background: var(--accentPale);
+  border-radius: 10px;
+}
+
+.pim-derivation-timeline {
+  display: flex;
+  gap: 10px;
+  grid-row: 3;
+}
+
+.pim-derivation-timeline > span {
+  width: 58px;
+  height: 4px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.pim-derivation-timeline i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--warm);
+  transform-origin: left;
 }
 
 .pim-comparison.is-paced .pim-comparison-card {

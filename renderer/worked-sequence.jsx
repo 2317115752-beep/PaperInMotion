@@ -22,7 +22,7 @@ function Values({values}) {
   return values.length === 1 ? number(values[0]) : `[${values.map(number).join(', ')}]`;
 }
 
-export function WorkedSequence({states, intro, frame, zh}) {
+export function WorkedSequence({states, intro, frame, zh, end}) {
   const active = states.findLastIndex(state => state.start <= frame);
   const current = states[active] ?? intro.findLast(beat => beat.start <= frame);
   const progress = current ? reveal(frame, current.start) : 0;
@@ -41,15 +41,31 @@ export function WorkedSequence({states, intro, frame, zh}) {
       <ol className={'pim-worked-steps' + (states.length > 5 ? ' is-dense' : '')}>
         {states.map(({values, label, start}, index) => {
           const shown = reveal(frame, start);
+          const nextStart = states[index + 1]?.start ?? end ?? start + 18;
+          const connection = Math.min(1, Math.max(0, (frame - start) / Math.max(1, nextStart - start)));
+          const previousValue = states[index - 1]?.values;
+          const activeProgress = index < active ? 1 : connection;
           return (
             <li className={'pim-worked-row' + (index === active ? ' is-active' : '')} key={index}>
               <span className="pim-worked-node" style={{'--shown': shown}} aria-hidden="true" />
+              {index < states.length - 1 && <span className="pim-worked-connection" aria-hidden="true"
+                style={{transform: `scaleY(${activeProgress})`}} />}
               <span className="pim-worked-state" style={{opacity: .64 + .36 * shown}}>
                 <StateLabel name={label.slice(0, 64)} />
               </span>
               <span className="pim-worked-value"
                 style={{opacity: shown, transform: `translateX(${(1 - shown) * 28}px)`}}>
-                <Values values={values} />
+                {values.length === 1 ? <Values values={values} /> : <>
+                  <span>[</span>
+                  {values.map((value, valueIndex) => (
+                    <React.Fragment key={valueIndex}>
+                      {valueIndex > 0 && ', '}
+                      <span className={previousValue?.length === values.length && previousValue[valueIndex] !== value
+                        ? 'pim-worked-changed' : undefined}>{number(value)}</span>
+                    </React.Fragment>
+                  ))}
+                  <span>]</span>
+                </>}
               </span>
             </li>
           );

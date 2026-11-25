@@ -2,6 +2,7 @@ import React, {useLayoutEffect, useMemo, useRef} from 'react';
 import {AbsoluteFill, Audio, Freeze, Img, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {formatCaptionMath, formatMath, LOWER_SCRIPTS, UPPER_SCRIPTS} from './math-format.mjs';
 import {CliffSequence, CLIFF_SCENES} from './cliff-sequence.jsx';
+import {flowPoints, flowTiming} from './flow-motion.mjs';
 import {SourceFigure} from './source-figure.jsx';
 import {canAnimateWorkedSequence, WorkedSequence} from './worked-sequence.jsx';
 import 'katex/dist/katex.min.css';
@@ -196,20 +197,56 @@ function TitleArtwork() {
   );
 }
 
-function Title({scene, zh, frame, focus}) {
-  const focused = focus && focus.label.trim() !== scene.bullets?.[0]?.trim();
-  const shift = focused ? entrance(frame, focus.first_frame, 18) : 0;
+function lessonAnchors(scene) {
+  const planned = timedVisualBeats(scene).map(beat => ({
+    label: beat.label, start: scene.cues[beat.cue].start_frame,
+  }));
+  const bullets = list(scene.bullets).filter(item => typeof item === 'string' && item.trim()).slice(0, 4);
+  const starts = stepTimes(scene, bullets.length);
+  const pacing = pacingPoints(scene).map(point => ({label: point.label, start: point.start_frame}));
+  const supporting = [...planned, ...pacing];
+  const primary = planned.length >= 2 ? planned : pacing.length >= 2 ? pacing : supporting;
+  const shouldUseBullets = primary.length < 2 || primary.every(anchor => anchor.start > starts[0]);
+  const opening = shouldUseBullets
+    ? bullets.slice(0, primary.length >= 2 ? 1 : bullets.length).map((label, index) => ({label, start: starts[index]}))
+    : [];
+  const anchors = [...opening, ...primary];
+  const seen = new Set([scene.title?.trim()]);
+  return anchors.sort((a, b) => a.start - b.start).filter(({label}) => {
+    const text = label.trim();
+    if (!text || seen.has(text)) return false;
+    seen.add(text);
+    return true;
+  }).slice(0, 6);
+}
+
+function Title({scene, zh, frame}) {
+  const anchors = lessonAnchors(scene);
+  const active = anchors.findLastIndex(anchor => anchor.start <= frame);
+  const current = anchors[active];
+  const entered = current ? entrance(frame, Math.max(13, current.start), 21) : 0;
+  const framingShift = active > 0 ? entrance(frame, anchors[1].start, 36) : 0;
+  const previous = anchors.slice(0, Math.max(0, active));
   return (
-    <div className="pim-title-grid" style={{'--pacing-title-shift': shift}}>
+    <div className="pim-title-grid" style={{'--pacing-title-shift': framingShift}}>
       <div>
         <Reveal className="pim-kicker">{label(zh, '论文导读', 'RESEARCH EXPLAINER')}</Reveal>
         <Reveal delay={5} className={'pim-title ' + (scene.title?.length > (zh ? 23 : 58) ? 'is-long' : '')}>
           {limit(scene.title, zh ? 64 : 130)}
         </Reveal>
-        {focused ? <PacingNote focus={focus} className="pim-paced-title-lead" /> :
-          scene.bullets?.[0] && <Reveal delay={13} className="pim-lead">{limit(scene.bullets[0], 145)}</Reveal>}
+        {current && <div className="pim-lead" style={{opacity: entered,
+          transform: 'translateY(' + (1 - entered) * 22 + 'px)'}}>
+          <CaptionText caption={limit(current.label, 145)} />
+        </div>}
       </div>
-      <TitleArtwork />
+      <div className="pim-title-visual">
+        <TitleArtwork />
+        {previous.length > 0 && <ul className="pim-title-anchors" style={{opacity: framingShift}}>
+          {previous.slice(-3).map(anchor => <li key={anchor.label}>
+            <CaptionText caption={limit(anchor.label, 64)} />
+          </li>)}
+        </ul>}
+      </div>
     </div>
   );
 }
@@ -226,7 +263,7 @@ function TalkingPoint({items, scene, frame}) {
   );
 }
 
-function routeFocusBeats(scene, labels) {
+function flowFocusBeats(scene, labels) {
   const tokens = text => text.normalize('NFKC').toLowerCase().replace(/_[\p{L}\p{N}]+/gu, '')
     .match(/[\p{L}\p{M}\p{N}]+/gu) ?? [];
   const names = labels.map(tokens);
@@ -240,60 +277,90 @@ function routeFocusBeats(scene, labels) {
   return beats.map((beat, position) => ({...beat, index: indexes[position], start: scene.cues[beat.cue].start_frame}));
 }
 
+function FlowConnections({layout, count, active, progress}) {
+  const points = flowPoints(layout, count);
+  if (!points.length) return null;
+  const destination = points[active];
+  const origin = points[active - 1];
+  const travel = progress[active];
+  const packet = origin && travel < 1 && {
+    x: origin.x + (destination.x - origin.x) * travel,
+    y: origin.y + (destination.y - origin.y) * travel,
+  };
+  return (
+    <div className="pim-flow-connections" aria-hidden="true">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+        {points.slice(1).map((point, index) => {
+          const from = points[index];
+          const segment = progress[index + 1];
+          return (
+            <g key={index}>
+              <line x1={from.x} y1={from.y} x2={point.x} y2={point.y} vectorEffect="non-scaling-stroke" />
+              {segment > 0 && <line className="pim-flow-connection-trace" vectorEffect="non-scaling-stroke"
+                x1={from.x} y1={from.y} x2={from.x + (point.x - from.x) * segment}
+                y2={from.y + (point.y - from.y) * segment} />}
+            </g>
+          );
+        })}
+      </svg>
+      {packet && <span className="pim-flow-packet" style={{left: packet.x + '%', top: packet.y + '%'}} />}
+    </div>
+  );
+}
+
 function Flow({scene, zh, frame, focus}) {
-  const nodes = list(scene.nodes).length ? scene.nodes : list(scene.bullets);
-  if (nodes.length < 2) return <Takeaways scene={scene} zh={zh} frame={frame} focus={focus} />;
-  const labels = nodes.slice(0, 5);
-  const shaped = ['stack', 'branch', 'alternating'].includes(scene.layout);
-  const routeBeats = shaped ? [] : routeFocusBeats(scene, labels);
-  const starts = routeBeats.length ? labels.map((_, index) => {
+  const {fps} = useVideoConfig();
+  const customNodes = list(scene.nodes).filter(node => typeof node === 'string' && node.trim());
+  const labels = (customNodes.length ? customNodes : list(scene.bullets)).filter(node =>
+    typeof node === 'string' && node.trim()).slice(0, 5);
+  if (labels.length < 2) return <Takeaways scene={scene} zh={zh} frame={frame} focus={focus} />;
+  const layout = ['stack', 'branch', 'alternating'].includes(scene.layout) ? scene.layout : 'route';
+  const matchedBeats = flowFocusBeats(scene, labels);
+  const starts = matchedBeats.length ? labels.map((_, index) => {
     if (!index) return 0;
-    const previous = routeBeats.findLast(beat => beat.index <= index) ?? {index: 0, start: 0};
+    const previous = matchedBeats.findLast(beat => beat.index <= index) ?? {index: 0, start: 0};
     if (previous.index === index) return previous.start;
-    const next = routeBeats.find(beat => beat.index > index) ?? {index: labels.length, start: scene.duration_frames};
+    const next = matchedBeats.find(beat => beat.index > index) ?? {index: labels.length, start: scene.duration_frames};
     return previous.start + (next.start - previous.start) * (index - previous.index) / (next.index - previous.index);
   }) : stepTimes(scene, labels.length);
-  const active = Math.max(0, starts.findLastIndex(start => start <= frame));
-  const nextGap = (starts[active + 1] ?? scene.duration_frames) - starts[active];
-  const travel = entrance(frame, starts[active], Math.max(1, Math.min(15, nextGap)));
-  const progress = active ? (active - 1 + travel) / (labels.length - 1) : 0;
+  const {active, progress} = flowTiming(starts, scene.duration_frames, frame, fps);
   const notes = focus ? <PacingNote focus={focus} /> : scene.visual_beats?.length ? <VisualCues scene={scene} frame={frame} />
     : <TalkingPoint items={list(scene.bullets).filter(item => !labels.includes(item))} scene={scene} frame={frame} />;
   const formula = scene.formula && <Reveal delay={10} className="pim-flow-formula"><MathExpression text={scene.formula} /></Reveal>;
-  if (shaped) {
-    return (
-      <div className={'pim-flow-layout pim-flow-layout--' + scene.layout}>
-        <div className="pim-shaped-flow-body">
-          <ol className="pim-shaped-flow">
-            {labels.map((node, index) => {
-              const amount = entrance(frame, starts[index], 16);
-              return (
-                <li key={index} className={index === active ? 'is-active' : ''}
-                  style={{opacity: .18 + .82 * amount, '--arrival': amount, '--step': index + 1}}>
-                  <CaptionText caption={limit(node, 74)} />
-                </li>
-              );
-            })}
-          </ol>
-          {scene.layout === 'stack' && <div className="pim-stack-focus">
-            <div className="pim-stack-progress" aria-hidden="true">
-              <span style={{height: progress * 100 + '%'}} />
-            </div>
-            <Reveal key={active} delay={starts[active]} className="pim-stack-label">
-              <CaptionText caption={limit(labels[active], 74)} />
-            </Reveal>
-          </div>}
-        </div>
-        {formula}
-        {notes}
-      </div>
-    );
-  }
-  const cue = routeBeats.find(beat => beat.index === active && beat.start <= frame);
+  const cue = matchedBeats.find(beat => beat.index === active && beat.start <= frame);
   const nativeStart = cue?.start ?? starts[active];
   const activeFocus = focus?.start_frame >= nativeStart ? focus : null;
   const focusStart = activeFocus?.start_frame ?? nativeStart;
   const focusText = activeFocus?.label ?? cue?.label ?? labels[active];
+  if (layout !== 'route') {
+    return (
+      <div className={'pim-flow-layout pim-flow-layout--' + layout}>
+        <div className="pim-shaped-flow-body">
+          <div className="pim-shaped-graph">
+            <ol className="pim-shaped-flow">
+              {labels.map((node, index) => {
+                const amount = entrance(frame, starts[index], 16);
+                return (
+                  <li key={index} className={index === active ? 'is-active' : index < active ? 'is-visited' : ''}
+                    style={{'--arrival': amount, '--step': index + 1, '--travel': progress[index]}}>
+                    {layout !== 'branch' && <span className="pim-shaped-pin" aria-hidden="true" />}
+                    <span className="pim-shaped-label"><CaptionText caption={limit(node, 74)} /></span>
+                  </li>
+                );
+              })}
+            </ol>
+            <FlowConnections layout={layout} count={labels.length} active={active} progress={progress} />
+          </div>
+          {layout === 'stack' && <Reveal key={focusStart + ':' + focusText} delay={focusStart}
+            className="pim-stack-label">
+            <CaptionText caption={limit(focusText, 74)} />
+          </Reveal>}
+        </div>
+        {formula}
+        {(layout !== 'stack' || (!activeFocus && !matchedBeats.length)) && notes}
+      </div>
+    );
+  }
   return (
     <div className="pim-flow-layout pim-flow-route">
       <Reveal key={focusStart + ':' + focusText} delay={focusStart}
@@ -301,21 +368,17 @@ function Flow({scene, zh, frame, focus}) {
         <CaptionText caption={focusText} />
       </Reveal>
       <div className="pim-flow" style={{'--flow-nodes': labels.length}}>
-        <div className="pim-flow-track" aria-hidden="true">
-          <div className="pim-flow-trace" style={{width: progress * 100 + '%'}} />
-        </div>
+        <FlowConnections layout={layout} count={labels.length} active={active} progress={progress} />
         {labels.map((node, index) => (
-          <div key={index} className={'pim-flow-card' + (index === active ? ' is-active' : index < active ? ' is-visited' : '')}>
+          <div key={index} className={'pim-flow-card' + (index === active ? ' is-active' : index < active ? ' is-visited' : '')}
+            style={{'--arrival': progress[index]}}>
             <span className="pim-flow-step" aria-hidden="true" />
             <Reveal delay={starts[index]}><CaptionText caption={limit(node, 74)} /></Reveal>
           </div>
         ))}
-        <div className="pim-flow-marker-track" aria-hidden="true">
-          <span className="pim-flow-marker" style={{left: progress * 100 + '%'}} />
-        </div>
       </div>
       {formula}
-      {!focus && !routeBeats.length && notes}
+      {!focus && !matchedBeats.length && notes}
     </div>
   );
 }
@@ -325,11 +388,11 @@ function Chart({scene, zh, frame, focus, appears = 0, worked = false}) {
   const points = list(chart?.points).filter(point => typeof point?.label === 'string' && Number.isFinite(point?.value)).slice(0, 6);
   if (points.length < 2) return <Takeaways scene={scene} zh={zh} frame={frame} focus={focus} />;
 
-  const stagger = Math.min(4, Math.max(1, Math.floor((scene.duration_frames - appears - 9) / points.length)));
   const recap = worked ? list(scene.cues).filter(cue => cue.start_frame >= appears &&
     cue.start_frame < scene.duration_frames - 8) : [];
   const starts = recap.length === points.length ? recap.map(cue => cue.start_frame)
-    : appears ? points.map((_, index) => appears + index * stagger) : stepTimes(scene, points.length);
+    : appears ? points.map((_, index) => appears + Math.floor((scene.duration_frames - appears) * index / points.length))
+      : stepTimes(scene, points.length);
   const active = starts.findLastIndex(start => start <= frame);
   const minimum = Math.min(0, ...points.map(point => point.value));
   const maximum = Math.max(0, ...points.map(point => point.value));
@@ -346,8 +409,12 @@ function Chart({scene, zh, frame, focus, appears = 0, worked = false}) {
       </div>}
       <div className="pim-chart-body" role="img" aria-label={points.map(point => `${point.label} ${point.display_value ?? number(point.value)}`).join(', ')}>
         {points.map((point, index) => {
-          const fillFrames = Math.max(1, Math.min(appears ? 10 : 22, scene.duration_frames - starts[index] - 1));
-          const progress = entrance(frame, starts[index], fillFrames);
+          const start = starts[index];
+          const until = (starts[index + 1] ?? scene.duration_frames) - start;
+          const fillFrames = Math.max(1, Math.min(80, until - 1, Math.floor(until * .66)));
+          const progress = frame >= scene.duration_frames - 1 ? 1 : interpolate(frame, [start, start + fillFrames], [0, 1], {
+            extrapolateLeft: 'clamp', extrapolateRight: 'clamp',
+          });
           const length = Math.abs(point.value) / scale / range * 100 * progress;
           const tip = point.value < 0 ? origin - length : origin + length;
           const focused = index === active;
@@ -361,7 +428,9 @@ function Chart({scene, zh, frame, focus, appears = 0, worked = false}) {
                 <span className="pim-chart-bar" style={{left: `${origin - (point.value < 0 ? length : 0)}%`, width: `${length}%`}} />
                 {focused && <span className="pim-chart-tip" style={{left: tip + '%', opacity: focus}} aria-hidden="true" />}
               </div>
-              <div className="pim-chart-value" style={{opacity: progress}}>{point.display_value ?? number(point.value)}</div>
+              <div className="pim-chart-value" style={{opacity: progress === 1 ? 1 : 0}}>
+                {point.display_value ?? number(point.value)}
+              </div>
             </div>
           );
         })}
@@ -379,50 +448,34 @@ function Chart({scene, zh, frame, focus, appears = 0, worked = false}) {
   );
 }
 
-function Equation({scene, zh, frame, focus, paced}) {
+function Equation({scene, zh, frame, focus}) {
   const equations = list(scene.equations).filter(item => typeof item?.expression === 'string' && item.expression.trim()).slice(0, 3);
   if (!equations.length && scene.formula) equations.push({expression: scene.formula});
   if (!equations.length) return <Takeaways scene={scene} zh={zh} frame={frame} focus={focus} />;
-  if (scene.layout === 'derive' && equations.length > 1) {
+  if (equations.length > 1) {
     return <Derivation scene={scene} equations={equations} frame={frame} focus={focus} />;
   }
-  if (paced && equations.length === 1) {
-    const equation = equations[0];
-    const shift = focus ? entrance(frame, focus.first_frame, 18) : 0;
-    return (
-      <div className="pim-paced-equation">
-        <div className="pim-paced-equation-main" style={{transform: `translateY(${-115 * shift}px)`}}>
-          {equation.label && <div className="pim-derivation-label"><CaptionText caption={equation.label} /></div>}
-          <FittedEquation expression={equation.expression} className="pim-derivation-expression" />
-        </div>
-        {focus && focus.label !== equation.label && focus.label !== equation.expression && <PacingNote focus={focus} />}
-      </div>
-    );
-  }
-  const active = activeStep(scene, frame, equations.length);
-  const starts = stepTimes(scene, equations.length);
-  const callout = scene.layout === 'callout' && equations.length === 1;
-  const explanation = list(scene.bullets).filter(Boolean);
-  const hasVisualBeats = list(scene.visual_beats).length > 0;
+  const equation = equations[0];
+  const anchors = lessonAnchors(scene)
+    .filter(anchor => anchor.label !== equation.label && anchor.label !== equation.expression);
+  const active = anchors.findLastIndex(anchor => anchor.start <= frame);
+  const current = anchors[active];
+  const shift = anchors.length ? entrance(frame, anchors[0].start, 30) : 0;
+  const next = anchors[active + 1]?.start ?? scene.duration_frames;
+  const progress = current ? interpolate(frame, [current.start, Math.max(current.start + 1, next)], [0, 1],
+    {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}) : 0;
   return (
-    <div className={'pim-equation-grid' + (!explanation.length || hasVisualBeats ? ' is-solo' : '') + (callout ? ' pim-equation-callout' : '')}>
-      <div className="pim-equation-panel" style={equations.length === 1
-        ? {transform: 'scale(' + (1 + .04 * visualCuePulse(scene, frame)) + ')'} : undefined}>
-        {equations.map(({label: name, expression}, index) => {
-          const progress = entrance(frame, starts[index], 24);
-          return (
-            <div key={index} className={'pim-equation' + (index === active ? ' is-active' : '')}
-              style={{opacity: progress * (index === active ? 1 : .66), transform: 'translateX(' + (1 - progress) * 30 + 'px)'}}>
-              {name && <span className="pim-equation-label">{limit(name, 56)}</span>}
-              <span className={expression.length > 70 ? 'is-long' : ''}><MathExpression text={expression} /></span>
-              {index === active && <span className="pim-equation-underline" aria-hidden="true"
-                style={{transform: 'scaleX(' + progress + ')'}} />}
-            </div>
-          );
-        })}
-      </div>
-      {focus ? <PacingNote focus={focus} className="pim-equation-cues" /> : hasVisualBeats ? <VisualCues scene={scene} frame={frame} className="pim-equation-cues" />
-        : <TalkingPoint items={scene.bullets} scene={scene} frame={frame} />}
+    <div className={'pim-paced-equation' + (scene.layout === 'callout' ? ' is-callout' : '')}>
+      <Reveal className="pim-paced-equation-main"
+        style={shift ? {transform: `translateY(${-87 * shift}px)`} : undefined}>
+        {equation.label && <div className="pim-derivation-label"><CaptionText caption={equation.label} /></div>}
+        <FittedEquation expression={equation.expression} className="pim-derivation-expression" />
+      </Reveal>
+      {current && <Reveal className="pim-single-equation-note" key={current.label} delay={current.start}>
+        <CaptionText caption={limit(current.label, 98)} />
+        {anchors.length > 1 && <span className="pim-equation-progress" aria-hidden="true"
+          style={{transform: `scaleX(${progress})`}} />}
+      </Reveal>}
     </div>
   );
 }
@@ -459,20 +512,29 @@ function Derivation({scene, equations, frame, focus}) {
   const current = equations[active];
   const previous = equations[active - 1];
   const cue = visual.findLast(beat => scene.cues[beat.cue].start_frame <= frame);
-  const note = cue?.label ?? (!visual.length ? list(scene.bullets)[active] : '');
+  const note = focus?.label ?? cue?.label ?? (!visual.length ? list(scene.bullets)[active] : '');
+  const noteStart = focus?.start_frame ?? (cue ? scene.cues[cue.cue].start_frame : starts[active]);
   const progress = entrance(frame, starts[active], 16);
+  const intervalEnd = starts[active + 1] ?? scene.duration_frames;
+  const interval = interpolate(frame, [starts[active], Math.max(starts[active] + 1, intervalEnd)], [0, 1],
+    {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   return (
     <div className="pim-derivation">
       <div className="pim-derivation-main">
         {current.label && <div className="pim-derivation-label"><CaptionText caption={limit(current.label, 56)} /></div>}
         <FittedEquation expression={current.expression} className="pim-derivation-expression"
           style={{opacity: .28 + .72 * progress, transform: 'translateY(' + ((1 - progress) * 26) + 'px)'}} />
-        <div className="pim-derivation-rule" aria-hidden="true" style={{transform: 'scaleX(' + progress + ')'}} />
+        <div className="pim-derivation-timeline" aria-hidden="true">
+          {equations.map((_, index) => <span key={index}>
+            <i style={{transform: `scaleX(${index < active ? 1 : index === active ? interval : 0})`}} />
+          </span>)}
+        </div>
       </div>
       <div className="pim-derivation-context">
-        {previous && <FittedEquation expression={previous.expression} className="pim-derivation-previous" />}
-        {focus ? <PacingNote focus={focus} /> : note && <Reveal key={note} className="pim-derivation-note"
-          delay={cue ? scene.cues[cue.cue].start_frame : starts[active]}>
+        {previous && <FittedEquation expression={previous.expression} className="pim-derivation-previous"
+          style={{opacity: .72 * progress}} />}
+        {note && note !== current.label && note !== current.expression && <Reveal key={note} className="pim-derivation-note"
+          delay={noteStart}>
           <CaptionText caption={limit(note, 100)} />
         </Reveal>}
       </div>
@@ -697,7 +759,7 @@ function ExecutedExample({scene, zh, frame, states, focus, paced}) {
       <div className="pim-executed-layout">
         {showComparison && scene.chart ? <Chart scene={scene} zh={zh} frame={frame} appears={appears} worked />
           : showComparison && comparison ? <><WorkedHeader zh={zh} />{comparison}</>
-            : <WorkedSequence states={sequence} intro={intro} frame={frame} zh={zh} />}
+            : <WorkedSequence states={sequence} intro={intro} frame={frame} zh={zh} end={appears} />}
         {formula}
       </div>
     );

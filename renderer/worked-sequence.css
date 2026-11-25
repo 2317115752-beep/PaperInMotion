@@ -77,6 +77,28 @@
   border-left: 2px solid var(--line);
 }
 
+.pim-worked-connection {
+  z-index: 1;
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  height: 100%;
+  width: 2px;
+  background: var(--worked-mark);
+  transform-origin: top;
+}
+
+.pim-worked-node {
+  position: relative;
+}
+
+.pim-worked-row.is-active .pim-worked-changed {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--warm);
+  text-underline-offset: .13em;
+}
+
 .pim-worked-row.is-active {
   --worked-mark: var(--warm);
 }
