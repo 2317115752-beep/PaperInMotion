@@ -8,6 +8,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 from backend.examples import execute_example
 from backend.pipeline import verify_sources, write_subtitles, demo_storyboard, read_paper, plan_scenes
+from backend.timing import prepare_subtitle_cues
 from backend.providers import parse_json, synthesize, ProviderError
 from backend.app import app
 
@@ -113,6 +114,33 @@ class PipelineTests(unittest.TestCase):
             text = path.read_text()
         self.assertIn('00:00:00,500 --> 00:00:01,500', text)
         self.assertIn('观察 γ_X、x₁ 和 J_(2D)^(full)，在 report_2 中。', text)
+
+    def test_chinese_mathematical_quantities_match_rendered_captions_and_srt(self):
+        cues = [
+            ('朝向分别是负十五度、零度和十五度。', '朝向分别是−15°、0°和15°。'),
+            ('输入是二百二十四乘二百二十四。', '输入是224×224。'),
+            ('输出一和二的结果。', '输出1和2的结果。'),
+            ('结果是零点九和二点四，基线是八十四点零。', '结果是0.9和2.4，基线是84.0。'),
+            ('误差是八十五点四毫米，等于另一个结果的三分之二。', '误差是85.4毫米，等于另一个结果的2/3。'),
+            ('在3DPW上，二维关键点误差下降百分之十二点五。', '在3DPW上，2D 关键点误差下降12.5%。'),
+            ('模型一度校正三点五毫米的偏移，两点之间的距离等于一。', '模型一度校正3.5毫米的偏移，两点之间的距离等于1。'),
+            ('一步步看，两个改动缺一不可。', '一步步看，两个改动缺一不可。'),
+            ('用公式七修正十五度的偏差，得到二十一维向量。', '用公式7修正15°的偏差，得到21D 向量。'),
+            ('代码 ' + chr(96) + '零点五' + chr(96) + ' 保留，公式 $E^2$ 旁边标为二点五。', '代码 ' + chr(96) + '零点五' + chr(96) + ' 保留，公式 $E^2$ 旁边标为2.5。'),
+        ]
+        scenes = [{'duration_frames': 24, 'cues': [{'start_frame': 0, 'end_frame': 24, 'text': source}]}
+                  for source, _ in cues]
+        prepare_subtitle_cues(scenes, 'zh')
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'a.srt'
+            write_subtitles(path, scenes, 'zh')
+            blocks = path.read_text().strip().split('\n\n')
+        for index, (scene, (source, expected), block) in enumerate(zip(scenes, cues, blocks, strict=True)):
+            cue = scene['cues'][0]
+            self.assertEqual(cue['text'], source)
+            self.assertEqual(cue.get('caption_text', cue['text']), expected)
+            self.assertEqual(block.splitlines()[1], f'00:00:{index:02},000 --> 00:00:{index + 1:02},000')
+            self.assertEqual(block.splitlines()[2], expected.replace('$E^2$', 'E²'))
 
     def test_srt_preserves_filenames_and_simplifies_delimited_math(self):
         cue = {'text': r'Use w_1.npy and `x_1` with \(\Delta_0\) and $E^2$.',

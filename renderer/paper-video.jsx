@@ -953,7 +953,7 @@ function CaptionText({caption, paperTitle}) {
 function captionAt(scene, frame, fps, zh) {
   if (Array.isArray(scene.cues)) {
     const cue = scene.cues.find(({start_frame, end_frame}) => frame >= start_frame && frame < end_frame);
-    return cue?.text ?? '';
+    return cue?.caption_text ?? cue?.text ?? '';
   }
   // Legacy projects did not store cues. Reproduce a readable estimate from their duration.
   const text = scene.narration ?? '';

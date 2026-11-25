@@ -18,7 +18,7 @@ from .providers import ProviderError, chat_json, get_config, synthesize
 from .paper import CAPTION, read_document
 from .timing import (
     FPS, dump_srt, estimated_cues, fit_scene_durations, has_spoken_text, narration_shortfalls,
-    narration_segments, narration_units, produce_scene_audio, schedule_beats,
+    narration_segments, narration_units, prepare_subtitle_cues, produce_scene_audio, schedule_beats,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1132,6 +1132,7 @@ def run_job(job, folder, update):
             holds.append(longest_visual_hold(scene['duration_frames'], changes))
     if holds and max(holds) > FPS * VISUAL_HOLD_TARGET_SECONDS:
         warnings.append('Some scenes have longer gaps between planned visual changes.')
+    prepare_subtitle_cues(scenes, language)
     actual = sum(s['duration_frames'] for s in scenes)/FPS
     if not job['is_demo'] and round(actual) != duration:
         if recommended_pacing:

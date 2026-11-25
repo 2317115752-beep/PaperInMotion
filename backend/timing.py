@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import wave
 
+from .caption_numbers import format_math_numbers
+
 FPS = 24
 PAUSE = .12
 MIN_PLAYBACK_RATE = .92
@@ -215,6 +217,30 @@ def srt_notation(text):
     return ''.join(part if index % 2 else plain_math(part) for index, part in enumerate(parts))
 
 
+CAPTION_LITERAL = re.compile(r'\x60[^\x60\n]+\x60|' + SRT_INLINE_MATH.pattern)
+
+
+def subtitle_text(text, language):
+    if language != 'zh':
+        return text
+    parts, end = [], 0
+    for match in CAPTION_LITERAL.finditer(text):
+        parts.extend((format_math_numbers(text[end:match.start()]), match[0]))
+        end = match.end()
+    parts.append(format_math_numbers(text[end:]))
+    return ''.join(parts)
+
+
+def prepare_subtitle_cues(scenes, language):
+    for scene in scenes:
+        for cue in scene.get('cues') or ():
+            text = subtitle_text(cue['text'], language)
+            if text == cue['text']:
+                cue.pop('caption_text', None)
+            else:
+                cue['caption_text'] = text
+
+
 def dump_srt(path, scenes, language):
     def timestamp(frames):
         ms = round(frames*1000/FPS)
@@ -231,7 +257,7 @@ def dump_srt(path, scenes, language):
             cues = estimated_cues(scene['narration'], frames, language)
         for cue in cues:
             start, end = (timestamp(offset+cue[key]) for key in ('start_frame', 'end_frame'))
-            text = srt_notation(cue['text'])
+            text = srt_notation(subtitle_text(cue['text'], language))
             blocks.append(f"{len(blocks)+1}\n{start} --> {end}\n{text}\n")
         offset += scene['duration_frames']
     Path(path).write_text('\n'.join(blocks), encoding='utf-8')
